@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.1
+
+### Fixes
+
+- **Fix Open VSX publishing** — Created namespace on Open VSX and added `skipDuplicate` to publish workflow for idempotent releases.
+
 ## v1.1.0
 
 ### Features
