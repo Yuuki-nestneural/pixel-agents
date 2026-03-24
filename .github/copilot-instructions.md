@@ -81,15 +81,66 @@ Report that a sub-agent has finished. Removes the subagent character.
 - `agent_id` (string, recommended): Your agent_id from register_agent
 - `subagent_name` (string, required): Display name of the subagent that finished
 
+### `message_agent`
+Send a message to another registered agent. The message is queued for the target and logged in the chat log.
+
+**Parameters:**
+- `agent_id` (string, optional): Your agent_id (sender)
+- `target_agent_id` (string, required): The agent_id of the target agent
+- `message` (string, required): The message to send
+
+### `check_messages`
+Check for messages from other agents. Returns all unread messages and clears the queue.
+
+**Parameters:**
+- `agent_id` (string, required): Your agent_id to check messages for
+
+### `list_agents`
+List all currently registered agents. Useful for finding agent_ids for messaging.
+
+### `add_quest`
+Add a new quest/task to the quest board (displayed on the office whiteboard).
+
+**Parameters:**
+- `agent_id` (string, optional): Your agent_id (quest creator)
+- `title` (string, required): Short quest title
+- `description` (string, optional): Detailed description
+- `priority` (enum, optional): `low`, `medium`, `high`, or `critical` (default: medium)
+- `assigned_to` (string, optional): Agent ID to assign the quest to
+
+### `update_quest`
+Update the status of an existing quest.
+
+**Parameters:**
+- `quest_id` (string, required): The quest ID to update
+- `status` (enum, optional): `open`, `in_progress`, `done`, or `failed`
+- `assigned_to` (string, optional): Agent ID to reassign to
+- `note` (string, optional): Progress note
+
+### `list_quests`
+List all quests on the quest board.
+
+**Parameters:**
+- `status_filter` (enum, optional): `open`, `in_progress`, `done`, `failed`, or `all` (default: all)
+
+### `get_chat_log`
+Retrieve the agent chat log history (questions, replies, notifications, agent messages).
+
+**Parameters:**
+- `last_n` (number, optional): Number of recent entries to return (default: 20)
+
 ## Workflow Example
 1. Call `register_agent` → save your `agent_id`
 2. Call `report_activity` with your `agent_id`
 3. If you need clarification, use `ask_user` (NOT chat)
 4. Do your work, calling `report_activity` for each action
-5. If delegating work, use `report_subagent_activity` and `report_subagent_done`
-6. When done, call `notify_user` with a summary
-7. Call `report_idle`
-8. At session end, call `unregister_agent`
+5. Use `add_quest` to create tasks on the quest board
+6. Use `message_agent` to coordinate with other agents
+7. Use `check_messages` periodically to receive messages
+8. If delegating work, use `report_subagent_activity` and `report_subagent_done`
+9. When done, call `notify_user` with a summary
+10. Call `report_idle`
+11. At session end, call `unregister_agent`
 
 ## Setup
 1. Configure Telegram in VS Code settings: `pixelAgents.telegram.botToken` and `pixelAgents.telegram.chatId`

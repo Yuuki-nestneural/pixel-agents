@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { ChatLog } from './chatLog.js';
 import {
   COMMAND_EXPORT_DEFAULT_LAYOUT,
   COMMAND_SHOW_PANEL,
@@ -16,6 +17,7 @@ import { PixelAgentsViewProvider } from './PixelAgentsViewProvider.js';
 let providerInstance: PixelAgentsViewProvider | undefined;
 let mcpServerInstance: PixelAgentsMcpServer | undefined;
 let copilotDetectorInstance: CopilotDetector | undefined;
+let chatLogInstance: ChatLog | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -120,6 +122,20 @@ async function startMcpServer(): Promise<void> {
     mcpServerInstance.setCopilotDetector(copilotDetectorInstance);
   }
 
+  // Wire chat log
+  if (!chatLogInstance) {
+    chatLogInstance = new ChatLog();
+  }
+  mcpServerInstance.setChatLog(chatLogInstance);
+
+  // Forward chat log entries to webview
+  chatLogInstance.onDidChange((entry) => {
+    providerInstance?.webviewView?.webview.postMessage({
+      type: 'chatLogEntry',
+      entry,
+    });
+  });
+
   // Wire agent registration lifecycle
   mcpServerInstance.onAgentRegistered = (agentId, agentName) => {
     outputChannel?.appendLine(`[MCP] Agent registered: ${agentId} → "${agentName}"`);
@@ -167,6 +183,14 @@ async function startMcpServer(): Promise<void> {
       type: 'subagentClear',
       id: parentId,
       parentToolId: toolId,
+    });
+  };
+
+  // Wire quest board updates to the webview
+  mcpServerInstance.onQuestChanged = (quests) => {
+    providerInstance?.webviewView?.webview.postMessage({
+      type: 'questBoardUpdate',
+      quests,
     });
   };
 
@@ -244,4 +268,5 @@ export function deactivate() {
   providerInstance?.dispose();
   mcpServerInstance?.dispose();
   copilotDetectorInstance?.dispose();
+  chatLogInstance?.dispose();
 }

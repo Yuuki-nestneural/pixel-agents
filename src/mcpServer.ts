@@ -2,6 +2,7 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import { z } from 'zod';
 
+import type { ChatLog } from './chatLog.js';
 import { MCP_DEFAULT_PORT, MCP_SERVER_NAME, MCP_SERVER_VERSION } from './constants.js';
 import type { CopilotDetector } from './copilotDetector.js';
 import { removeMcpConfig, writeMcpConfig } from './mcpConfig.js';
@@ -11,6 +12,26 @@ import { TelegramBot } from './telegramBot.js';
 // that cause assignment issues under Node16 module resolution.
 
 type McpServerInstance = any;
+
+interface AgentMessage {
+  from: string;
+  fromId?: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface Quest {
+  id: string;
+  title: string;
+  description?: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'in_progress' | 'done' | 'failed';
+  createdBy: string;
+  assignedTo?: string;
+  notes?: string[];
+  createdAt: number;
+  updatedAt?: number;
+}
 
 /**
  * MCP Server embedded in the VS Code extension.
@@ -28,11 +49,19 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   private httpServer: http.Server | null = null;
   private telegramBot: TelegramBot | null = null;
   private copilotDetector: CopilotDetector | null = null;
+  private chatLog: ChatLog | null = null;
   private port: number;
 
   // Agent registration: each register_agent call creates a unique agent
   private registeredAgents = new Map<string, string>(); // agentId → agentName
   private nextRegisteredId = 1;
+
+  // Agent-to-agent message queues
+  private agentMessageQueues = new Map<string, AgentMessage[]>();
+
+  // Quest board
+  private quests = new Map<string, Quest>();
+  private nextQuestId = 1;
 
   // Callback when a new agent registers
   onAgentRegistered?: (agentId: string, agentName: string) => void;
@@ -49,6 +78,9 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   ) => void;
   onSubagentDone?: (parentId: number, toolId: string) => void;
 
+  // Callback when quest board changes (set by extension.ts)
+  onQuestChanged?: (quests: Quest[]) => void;
+
   constructor(private readonly outputChannel: vscode.OutputChannel) {
     const config = vscode.workspace.getConfiguration('pixelAgents');
     this.port = config.get<number>('mcp.port', MCP_DEFAULT_PORT);
@@ -56,6 +88,17 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
 
   setCopilotDetector(detector: CopilotDetector): void {
     this.copilotDetector = detector;
+  }
+
+  setChatLog(log: ChatLog): void {
+    this.chatLog = log;
+  }
+
+  /**
+   * Get all quests as an array (for webview sync).
+   */
+  getQuestList(): Quest[] {
+    return [...this.quests.values()];
   }
 
   /**
@@ -227,7 +270,24 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         }
         try {
           const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : 0;
+
+          // Log the outgoing question
+          this.chatLog?.addEntry({
+            agentName: 'Agent',
+            type: 'ask_user',
+            message,
+          });
+
           const reply = await bot.askUser(message, timeoutMs, image_url);
+
+          // Log the incoming reply
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: reply.text || '[Photo]',
+            imageBase64: reply.image?.data,
+            imageMimeType: reply.image?.mimeType,
+          });
 
           const content: Array<
             { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
@@ -298,6 +358,14 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         }
         try {
           await bot.notifyUser(message, image_url);
+
+          // Log the notification
+          this.chatLog?.addEntry({
+            agentName: 'Agent',
+            type: 'notify_user',
+            message,
+          });
+
           return {
             content: [{ type: 'text' as const, text: 'Notification sent successfully.' }],
           };
@@ -472,8 +540,359 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       },
     );
 
+    // ── message_agent: Agent-to-agent messaging ──────────────────
+    srv.tool(
+      'message_agent',
+      'Send a message to another agent. The message is logged in the chat log and forwarded to the target agent. Use this for agent-to-agent coordination.',
+      {
+        agent_id: z.string().optional().describe('Your agent_id (sender)'),
+        target_agent_id: z.string().describe('The agent_id of the target agent to message'),
+        message: z.string().describe('The message to send to the target agent'),
+      },
+      async ({
+        agent_id,
+        target_agent_id,
+        message,
+      }: {
+        agent_id?: string;
+        target_agent_id: string;
+        message: string;
+      }) => {
+        const senderName = this.resolveAgentName(agent_id);
+        const targetName = this.registeredAgents.get(target_agent_id);
+        if (!targetName) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: Target agent "${target_agent_id}" not found. Available agents: ${[...this.registeredAgents.entries()].map(([id, name]) => `${id} (${name})`).join(', ') || 'none'}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Log the agent-to-agent message
+        this.chatLog?.addEntry({
+          agentId: agent_id,
+          agentName: senderName,
+          type: 'agent_message',
+          message,
+          targetAgentId: target_agent_id,
+          targetAgentName: targetName,
+        });
+
+        // Queue the message for the target agent
+        if (!this.agentMessageQueues.has(target_agent_id)) {
+          this.agentMessageQueues.set(target_agent_id, []);
+        }
+        this.agentMessageQueues.get(target_agent_id)!.push({
+          from: senderName,
+          fromId: agent_id,
+          message,
+          timestamp: Date.now(),
+        });
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Message sent to "${targetName}" (${target_agent_id}).`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── check_messages: Receive messages from other agents ───────
+    srv.tool(
+      'check_messages',
+      'Check for messages from other agents. Returns all unread messages and clears the queue. Call this periodically to receive agent-to-agent communications.',
+      {
+        agent_id: z.string().describe('Your agent_id to check messages for'),
+      },
+      async ({ agent_id }: { agent_id: string }) => {
+        const messages = this.agentMessageQueues.get(agent_id) || [];
+        this.agentMessageQueues.set(agent_id, []); // Clear queue
+
+        if (messages.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'No new messages.' }],
+          };
+        }
+
+        const formatted = messages
+          .map((m) => `[${new Date(m.timestamp).toLocaleTimeString()}] ${m.from}: ${m.message}`)
+          .join('\n');
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `${messages.length} new message(s):\n${formatted}`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── list_agents: List all registered agents ──────────────────
+    srv.tool(
+      'list_agents',
+      'List all currently registered agents in the Pixel Agents office. Useful for finding agent_ids for agent-to-agent messaging.',
+      {},
+      async () => {
+        if (this.registeredAgents.size === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'No agents currently registered.' }],
+          };
+        }
+        const list = [...this.registeredAgents.entries()]
+          .map(([id, name]) => `- ${name} (${id})`)
+          .join('\n');
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Registered agents:\n${list}`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── add_quest: Add a quest to the quest board ────────────────
+    srv.tool(
+      'add_quest',
+      'Add a new quest/task to the Pixel Agents quest board. Quests are displayed on the whiteboard in the office.',
+      {
+        agent_id: z.string().optional().describe('Your agent_id (quest creator)'),
+        title: z.string().describe('Short quest title (e.g., "Fix login bug")'),
+        description: z.string().optional().describe('Detailed quest description'),
+        priority: z
+          .enum(['low', 'medium', 'high', 'critical'])
+          .optional()
+          .describe('Quest priority level (default: medium)'),
+        assigned_to: z.string().optional().describe('Agent ID to assign this quest to'),
+      },
+      async ({
+        agent_id,
+        title,
+        description,
+        priority,
+        assigned_to,
+      }: {
+        agent_id?: string;
+        title: string;
+        description?: string;
+        priority?: 'low' | 'medium' | 'high' | 'critical';
+        assigned_to?: string;
+      }) => {
+        const questId = `quest-${this.nextQuestId++}`;
+        const creatorName = this.resolveAgentName(agent_id);
+        const assigneeName = assigned_to ? this.resolveAgentName(assigned_to) : undefined;
+
+        const quest: Quest = {
+          id: questId,
+          title,
+          description,
+          priority: priority || 'medium',
+          status: 'open',
+          createdBy: creatorName,
+          assignedTo: assigneeName,
+          createdAt: Date.now(),
+        };
+
+        this.quests.set(questId, quest);
+
+        // Log to chat
+        this.chatLog?.addEntry({
+          agentId: agent_id,
+          agentName: creatorName,
+          type: 'system',
+          message: `📋 New quest: "${title}" [${quest.priority}]${assigneeName ? ` → assigned to ${assigneeName}` : ''}`,
+        });
+
+        // Notify webview
+        this.onQuestChanged?.(this.getQuestList());
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Quest created: "${title}" (${questId})`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── update_quest: Update a quest's status ────────────────────
+    srv.tool(
+      'update_quest',
+      'Update the status of an existing quest on the quest board.',
+      {
+        quest_id: z.string().describe('The quest ID to update'),
+        status: z
+          .enum(['open', 'in_progress', 'done', 'failed'])
+          .optional()
+          .describe('New status for the quest'),
+        assigned_to: z.string().optional().describe('Agent ID to reassign the quest to'),
+        note: z.string().optional().describe('A note or progress update for the quest'),
+      },
+      async ({
+        quest_id,
+        status,
+        assigned_to,
+        note,
+      }: {
+        quest_id: string;
+        status?: 'open' | 'in_progress' | 'done' | 'failed';
+        assigned_to?: string;
+        note?: string;
+      }) => {
+        const quest = this.quests.get(quest_id);
+        if (!quest) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: Quest "${quest_id}" not found.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        if (status) quest.status = status;
+        if (assigned_to) quest.assignedTo = this.resolveAgentName(assigned_to);
+        if (note) quest.notes = [...(quest.notes || []), note];
+        quest.updatedAt = Date.now();
+
+        // Log to chat
+        const changes: string[] = [];
+        if (status) changes.push(`status → ${status}`);
+        if (assigned_to) changes.push(`assigned → ${quest.assignedTo}`);
+        if (note) changes.push(`note: "${note}"`);
+
+        this.chatLog?.addEntry({
+          agentName: 'System',
+          type: 'system',
+          message: `📋 Quest "${quest.title}" updated: ${changes.join(', ')}`,
+        });
+
+        // Notify webview
+        this.onQuestChanged?.(this.getQuestList());
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Quest "${quest.title}" updated: ${changes.join(', ')}`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── list_quests: View all quests ─────────────────────────────
+    srv.tool(
+      'list_quests',
+      'List all quests on the quest board. Returns all quests with their status, priority, and assignee.',
+      {
+        status_filter: z
+          .enum(['open', 'in_progress', 'done', 'failed', 'all'])
+          .optional()
+          .describe('Filter quests by status (default: all)'),
+      },
+      async ({ status_filter }: { status_filter?: string }) => {
+        let quests = this.getQuestList();
+        if (status_filter && status_filter !== 'all') {
+          quests = quests.filter((q) => q.status === status_filter);
+        }
+
+        if (quests.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'No quests found.' }],
+          };
+        }
+
+        const formatted = quests
+          .map((q) => {
+            const parts = [`[${q.priority?.toUpperCase()}]`, `${q.title}`, `(${q.status})`];
+            if (q.assignedTo) parts.push(`→ ${q.assignedTo}`);
+            if (q.notes?.length) parts.push(`| ${q.notes[q.notes.length - 1]}`);
+            return `- ${q.id}: ${parts.join(' ')}`;
+          })
+          .join('\n');
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Quest board (${quests.length} quests):\n${formatted}`,
+            },
+          ],
+        };
+      },
+    );
+
+    // ── get_chat_log: Retrieve chat history ──────────────────────
+    srv.tool(
+      'get_chat_log',
+      'Retrieve the agent chat log history. Shows all ask_user questions, user replies, notifications, and agent-to-agent messages.',
+      {
+        last_n: z.number().optional().describe('Number of recent entries to return (default: 20)'),
+      },
+      async ({ last_n }: { last_n?: number }) => {
+        if (!this.chatLog) {
+          return {
+            content: [{ type: 'text' as const, text: 'Chat log not available.' }],
+          };
+        }
+        const entries = this.chatLog.getEntries();
+        const count = last_n || 20;
+        const recent = entries.slice(-count);
+
+        if (recent.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'Chat log is empty.' }],
+          };
+        }
+
+        const formatted = recent
+          .map((e) => {
+            const time = new Date(e.timestamp).toLocaleTimeString();
+            const prefix =
+              e.type === 'ask_user'
+                ? '❓'
+                : e.type === 'user_reply'
+                  ? '💬'
+                  : e.type === 'notify_user'
+                    ? '📢'
+                    : e.type === 'agent_message'
+                      ? '🤝'
+                      : 'ℹ️';
+            let line = `[${time}] ${prefix} ${e.agentName}: ${e.message}`;
+            if (e.targetAgentName) line += ` → ${e.targetAgentName}`;
+            if (e.imageBase64) line += ' [📷 Image]';
+            return line;
+          })
+          .join('\n');
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Chat log (last ${recent.length} entries):\n${formatted}`,
+            },
+          ],
+        };
+      },
+    );
+
     this.outputChannel.appendLine(
-      '[MCP] Tools registered: register_agent, unregister_agent, ask_user, notify_user, report_activity, report_idle, report_subagent_activity, report_subagent_done',
+      '[MCP] Tools registered: register_agent, unregister_agent, ask_user, notify_user, report_activity, report_idle, report_subagent_activity, report_subagent_done, message_agent, check_messages, list_agents, add_quest, update_quest, list_quests, get_chat_log',
     );
   }
 
