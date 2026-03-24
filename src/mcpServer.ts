@@ -232,7 +232,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     // ── ask_user: Send question to Telegram, wait for reply ──────
     srv.tool(
       'ask_user',
-      'Send a question to the user via Telegram and wait for their reply. Use this when you need user input or approval. Supports sending an image alongside the question, and receiving image replies.',
+      'Send a question to the user via Telegram and wait for their reply. Returns a request_id. If the reply arrives quickly, it is returned directly. Otherwise, use get_user_reply to poll for the response. Supports sending an image alongside the question.',
       {
         message: z.string().describe('The question or message to send to the user'),
         timeout_seconds: z
@@ -255,7 +255,6 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         timeout_seconds?: number;
         image_url?: string;
       }) => {
-        // Refresh bot from settings on each call to pick up config changes
         const bot = this.refreshTelegramBot();
         if (!bot) {
           return {
@@ -278,44 +277,54 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             message,
           });
 
-          const reply = await bot.askUser(message, timeoutMs, image_url);
+          // Send question and get request ID (non-blocking)
+          const requestId = await bot.sendQuestion(message, timeoutMs, image_url);
 
-          // Log the incoming reply
-          this.chatLog?.addEntry({
-            agentName: 'User',
-            type: 'user_reply',
-            message: reply.text || '[Photo]',
-            imageBase64: reply.image?.data,
-            imageMimeType: reply.image?.mimeType,
-          });
+          // Wait briefly (up to 15 seconds) for an immediate reply to avoid unnecessary polling
+          const reply = await bot.getReply(requestId, 15000);
 
-          const content: Array<
-            { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-          > = [];
-
-          // Add text content if present
-          if (reply.text) {
-            content.push({ type: 'text' as const, text: reply.text });
-          }
-
-          // Add image content if user replied with a photo
-          if (reply.image) {
-            content.push({
-              type: 'image' as const,
-              data: reply.image.data,
-              mimeType: reply.image.mimeType,
+          if (reply) {
+            // Reply arrived quickly — return it directly
+            this.chatLog?.addEntry({
+              agentName: 'User',
+              type: 'user_reply',
+              message: reply.text || '[Photo]',
+              imageBase64: reply.image?.data,
+              imageMimeType: reply.image?.mimeType,
             });
-            if (!reply.text) {
-              content.push({ type: 'text' as const, text: '[User sent a photo]' });
+
+            const content: Array<
+              { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+            > = [];
+
+            if (reply.text) {
+              content.push({ type: 'text' as const, text: reply.text });
             }
+            if (reply.image) {
+              content.push({
+                type: 'image' as const,
+                data: reply.image.data,
+                mimeType: reply.image.mimeType,
+              });
+              if (!reply.text) {
+                content.push({ type: 'text' as const, text: '[User sent a photo]' });
+              }
+            }
+            if (content.length === 0) {
+              content.push({ type: 'text' as const, text: '[Empty reply]' });
+            }
+            return { content };
           }
 
-          // Fallback if somehow no content
-          if (content.length === 0) {
-            content.push({ type: 'text' as const, text: '[Empty reply]' });
-          }
-
-          return { content };
+          // Reply not yet received — return request_id for polling
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Message sent. Reply not yet received. Use get_user_reply with request_id "${requestId}" to check for responses. You can continue working while waiting.`,
+              },
+            ],
+          };
         } catch (e) {
           return {
             content: [
@@ -327,6 +336,109 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             isError: true,
           };
         }
+      },
+    );
+
+    // ── get_user_reply: Poll for async Telegram reply ────────────
+    srv.tool(
+      'get_user_reply',
+      'Check for a reply to a previously sent ask_user question. Returns the user reply if available, or indicates still waiting. Use this after ask_user returns a request_id without an immediate reply.',
+      {
+        request_id: z.string().describe('The request_id returned by ask_user'),
+        wait_seconds: z
+          .number()
+          .optional()
+          .describe('Seconds to wait for a reply before returning (default: 10, max: 25)'),
+      },
+      async ({ request_id, wait_seconds }: { request_id: string; wait_seconds?: number }) => {
+        const bot = this.refreshTelegramBot();
+        if (!bot) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Error: Telegram bot not configured.',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const waitMs = Math.min((wait_seconds || 10) * 1000, 25000);
+
+        if (!bot.hasPendingRequest(request_id)) {
+          // Check if already resolved
+          const reply = await bot.getReply(request_id, 0);
+          if (reply) {
+            this.chatLog?.addEntry({
+              agentName: 'User',
+              type: 'user_reply',
+              message: reply.text || '[Photo]',
+              imageBase64: reply.image?.data,
+              imageMimeType: reply.image?.mimeType,
+            });
+
+            const content: Array<
+              { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+            > = [];
+            if (reply.text) content.push({ type: 'text' as const, text: reply.text });
+            if (reply.image) {
+              content.push({
+                type: 'image' as const,
+                data: reply.image.data,
+                mimeType: reply.image.mimeType,
+              });
+            }
+            if (content.length === 0) {
+              content.push({ type: 'text' as const, text: '[Empty reply]' });
+            }
+            return { content };
+          }
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Request "${request_id}" not found or already completed.`,
+              },
+            ],
+          };
+        }
+
+        const reply = await bot.getReply(request_id, waitMs);
+        if (reply) {
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: reply.text || '[Photo]',
+            imageBase64: reply.image?.data,
+            imageMimeType: reply.image?.mimeType,
+          });
+
+          const content: Array<
+            { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+          > = [];
+          if (reply.text) content.push({ type: 'text' as const, text: reply.text });
+          if (reply.image) {
+            content.push({
+              type: 'image' as const,
+              data: reply.image.data,
+              mimeType: reply.image.mimeType,
+            });
+          }
+          if (content.length === 0) {
+            content.push({ type: 'text' as const, text: '[Empty reply]' });
+          }
+          return { content };
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Still waiting for user reply. Call get_user_reply again with request_id "${request_id}" to check. You can continue working while waiting.`,
+            },
+          ],
+        };
       },
     );
 
@@ -892,7 +1004,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     );
 
     this.outputChannel.appendLine(
-      '[MCP] Tools registered: register_agent, unregister_agent, ask_user, notify_user, report_activity, report_idle, report_subagent_activity, report_subagent_done, message_agent, check_messages, list_agents, add_quest, update_quest, list_quests, get_chat_log',
+      '[MCP] Tools registered: register_agent, unregister_agent, ask_user, get_user_reply, notify_user, report_activity, report_idle, report_subagent_activity, report_subagent_done, message_agent, check_messages, list_agents, add_quest, update_quest, list_quests, get_chat_log',
     );
   }
 

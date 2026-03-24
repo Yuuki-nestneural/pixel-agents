@@ -33,14 +33,21 @@ Remove your agent from the office when your session ends.
 - `agent_id` (string, required): Your agent_id from register_agent
 
 ### `ask_user`
-Send a question to the user via Telegram and wait for their reply. **Use this for ALL questions — never ask in chat.** Supports sending an image alongside the question, and receiving image replies.
+Send a question to the user via Telegram and wait for their reply. **Use this for ALL questions — never ask in chat.** Supports sending an image alongside the question, and receiving image replies. If the user replies within ~15 seconds, the reply is returned directly. Otherwise, a `request_id` is returned — use `get_user_reply` to poll for the response.
 
 **Parameters:**
 - `message` (string, required): The question to send
 - `timeout_seconds` (number, optional): Max seconds to wait for reply (0 or omit for no limit)
 - `image_url` (string, optional): HTTP URL of an image to send alongside the question
 
-**Returns:** Text and/or image content. If the user replies with a photo, the response includes an MCP image content block (base64-encoded).
+**Returns:** Either the user's reply directly, or a `request_id` string to use with `get_user_reply`.
+
+### `get_user_reply`
+Poll for a reply to a previously sent `ask_user` question. Use this when `ask_user` returns a `request_id` instead of a direct reply.
+
+**Parameters:**
+- `request_id` (string, required): The request_id from ask_user
+- `wait_seconds` (number, optional): Seconds to wait before returning (default: 10, max: 25)
 
 ### `notify_user`
 Send a one-way notification to the user via Telegram. Does not wait for a reply. Supports sending an image alongside the notification.

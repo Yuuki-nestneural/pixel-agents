@@ -40,6 +40,18 @@ export class TelegramBot {
   private chatId: string;
   private lastUpdateId = 0;
 
+  // Pending reply tracking for async ask_user
+  private pendingReplies = new Map<
+    string,
+    {
+      resolve: (reply: TelegramReply) => void;
+      reject: (err: Error) => void;
+      deadline: number; // 0 = no deadline
+    }
+  >();
+  private pollingActive = false;
+  private pollingAbort: AbortController | null = null;
+
   constructor(botToken: string, chatId: string) {
     this.botToken = botToken;
     this.chatId = chatId;
@@ -260,7 +272,180 @@ export class TelegramBot {
     }
   }
 
+  /**
+   * Send a question and return a request ID. The reply will be collected asynchronously.
+   * Use `getReply(requestId)` to poll for the response.
+   * This avoids MCP tool timeouts by returning immediately.
+   */
+  async sendQuestion(text: string, timeoutMs = 0, imageUrl?: string): Promise<string> {
+    // Flush old updates
+    await this.flushOldUpdates();
+
+    // Send the question
+    if (imageUrl) {
+      await this.sendPhoto(imageUrl, `🤖 *Agent Question:*\n${text}`);
+    } else {
+      await this.sendMessage(`🤖 *Agent Question:*\n${text}`);
+    }
+
+    // Create a pending reply entry
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
+
+    const promise = new Promise<TelegramReply>((resolve, reject) => {
+      this.pendingReplies.set(requestId, { resolve, reject, deadline });
+    });
+
+    // Store the promise for later retrieval
+    this.replyPromises.set(requestId, promise);
+
+    // Start background polling if not already running
+    this.ensurePolling();
+
+    return requestId;
+  }
+
+  // Stores pending promises for sendQuestion
+  private replyPromises = new Map<string, Promise<TelegramReply>>();
+
+  /**
+   * Check if a reply has arrived for a given request ID.
+   * Returns the reply if available, or null if still waiting.
+   * Pass `wait` to block for a short period before returning.
+   */
+  async getReply(requestId: string, waitMs = 0): Promise<TelegramReply | null> {
+    const promise = this.replyPromises.get(requestId);
+    if (!promise) {
+      return null; // Unknown request
+    }
+
+    // Check if deadline has passed
+    const pending = this.pendingReplies.get(requestId);
+    if (pending && pending.deadline > 0 && Date.now() > pending.deadline) {
+      this.pendingReplies.delete(requestId);
+      this.replyPromises.delete(requestId);
+      return null; // Timed out
+    }
+
+    if (waitMs > 0) {
+      // Race: either get the reply or timeout after waitMs
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs));
+      const result = await Promise.race([promise.then((r) => r), timeout]);
+      if (result !== null) {
+        this.replyPromises.delete(requestId);
+      }
+      return result;
+    }
+
+    // Non-blocking check: see if promise is already resolved
+    const sentinel = Symbol('pending');
+    const result = await Promise.race([
+      promise.then((r) => r as TelegramReply | typeof sentinel),
+      Promise.resolve(sentinel),
+    ]);
+    if (result === sentinel) {
+      return null; // Still waiting
+    }
+    this.replyPromises.delete(requestId);
+    return result as TelegramReply;
+  }
+
+  /**
+   * Check if a request is still pending (no reply yet).
+   */
+  hasPendingRequest(requestId: string): boolean {
+    return this.pendingReplies.has(requestId);
+  }
+
+  /**
+   * Start the background polling loop if not already running.
+   */
+  private ensurePolling(): void {
+    if (this.pollingActive) return;
+    this.pollingActive = true;
+    this.pollingAbort = new AbortController();
+    this.pollLoop(this.pollingAbort.signal).catch(() => {});
+  }
+
+  /**
+   * Background polling loop that resolves pending reply promises.
+   */
+  private async pollLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted && this.pendingReplies.size > 0) {
+      try {
+        // Clean up expired requests
+        for (const [id, entry] of this.pendingReplies) {
+          if (entry.deadline > 0 && Date.now() > entry.deadline) {
+            entry.reject(new Error('Telegram reply timed out'));
+            this.pendingReplies.delete(id);
+            this.replyPromises.delete(id);
+          }
+        }
+
+        if (this.pendingReplies.size === 0) break;
+
+        const url = `${this.apiBase}/getUpdates`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            offset: this.lastUpdateId + 1,
+            timeout: 30,
+            allowed_updates: ['message'],
+          }),
+          signal,
+        });
+
+        if (!resp.ok) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
+        const data = (await resp.json()) as { result: TelegramUpdate[] };
+        for (const update of data.result) {
+          this.lastUpdateId = update.update_id;
+          const msg = update.message;
+          if (!msg || msg.chat.id.toString() !== this.chatId) continue;
+
+          let reply: TelegramReply | null = null;
+
+          if (msg.text) {
+            reply = { text: msg.text };
+          } else if (msg.photo && msg.photo.length > 0) {
+            const largestPhoto = msg.photo[msg.photo.length - 1];
+            try {
+              const filePath = await this.getFile(largestPhoto.file_id);
+              const downloaded = await this.downloadFile(filePath);
+              reply = { text: msg.caption || undefined, image: downloaded };
+            } catch {
+              reply = { text: msg.caption || '[Photo received but download failed]' };
+            }
+          }
+
+          if (reply) {
+            // Resolve the oldest pending request
+            const [oldestId, oldestEntry] = [...this.pendingReplies.entries()][0];
+            if (oldestEntry) {
+              oldestEntry.resolve(reply);
+              this.pendingReplies.delete(oldestId);
+            }
+          }
+        }
+      } catch (e) {
+        if (signal.aborted) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+    this.pollingActive = false;
+  }
+
   dispose(): void {
-    // Nothing to clean up — polling is synchronous per-call
+    this.pollingAbort?.abort();
+    // Reject all pending requests
+    for (const [id, entry] of this.pendingReplies) {
+      entry.reject(new Error('TelegramBot disposed'));
+      this.replyPromises.delete(id);
+    }
+    this.pendingReplies.clear();
   }
 }
