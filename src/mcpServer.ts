@@ -69,6 +69,9 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     requestId: string;
   } | null = null;
 
+  // Queue for user messages that arrive when no ask_user is pending
+  private userMessageQueue: string[] = [];
+
   // Callback when a new agent registers
   onAgentRegistered?: (agentId: string, agentName: string) => void;
   // Callback when an agent unregisters
@@ -135,12 +138,19 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
 
   /**
    * Submit a response to the currently pending ask_user question.
-   * Called from extension.ts when the webview user submits a reply.
+   * If no question is pending, queues the message for the next ask_user call.
    */
   submitAskUserResponse(response: string): boolean {
-    if (!this.pendingAskUser) return false;
-    this.pendingAskUser.resolve(response);
-    this.pendingAskUser = null;
+    if (this.pendingAskUser) {
+      this.pendingAskUser.resolve(response);
+      this.pendingAskUser = null;
+      return true;
+    }
+    // No pending request — queue the message
+    this.userMessageQueue.push(response);
+    this.outputChannel.appendLine(
+      `[MCP] User message queued (${this.userMessageQueue.length} in queue)`,
+    );
     return true;
   }
 
@@ -275,7 +285,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     // ── ask_user: Ask the user a question and BLOCK until they reply ──
     srv.tool(
       'ask_user',
-      'Ask the user a question and BLOCK until they reply. This tool sends the question to the user (via Telegram and/or the VS Code webview panel) and waits indefinitely for their response. You MUST call this tool before ending any conversation or task. NEVER complete a task without calling this tool first. The response format is: {"response":"...","queued":false,"attachmentCount":0}.',
+      'Ask the user a question and BLOCK until they reply. This tool sends the question to the user (via Telegram and/or the VS Code webview panel) and waits indefinitely for their response. You MUST call this tool before ending any conversation or task. NEVER complete a task without calling this tool first. The response format is: {"response":"...","queued":false,"attachmentCount":0}. If queued is true, the response was sent by the user before you asked — still process it normally.',
       {
         question: z.string().describe('The question to ask the user'),
       },
@@ -289,6 +299,31 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
 
         // Forward to webview (for whiteboard chat panel)
         this.onAskUserForWebview?.(question);
+
+        // Check if there are queued messages from the user
+        if (this.userMessageQueue.length > 0) {
+          const queued = this.userMessageQueue.join('\n');
+          this.userMessageQueue = [];
+
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: queued,
+          });
+
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  response: queued,
+                  queued: true,
+                  attachmentCount: 0,
+                }),
+              },
+            ],
+          };
+        }
 
         // Try sending via Telegram (non-blocking notification)
         const bot = this.refreshTelegramBot();
