@@ -56,14 +56,14 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
         setTab('chat'); // auto-switch to chat tab
       } else if (msg.type === 'chatLogEntry') {
         // Live chat log entry from the backend
+        // Skip user_reply — already shown locally when user submits via the input
         const e = msg.entry;
-        if (!e) return;
-        const chatType = e.type === 'user_reply' ? 'response' : 'question';
+        if (!e || e.type === 'user_reply') return;
         setChatMessages((prev) => [
           ...prev,
           {
             id: String(e.id),
-            type: chatType,
+            type: 'question' as const,
             text: `[${e.agentName}] ${e.message}`,
             timestamp: e.timestamp,
           },
