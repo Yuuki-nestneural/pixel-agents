@@ -27,6 +27,7 @@ import { EditTool, TILE_SIZE } from '../types.js';
 interface OfficeCanvasProps {
   officeState: OfficeState;
   onClick: (agentId: number) => void;
+  onFurnitureClick?: (furnitureType: string, uid: string) => void;
   isEditMode: boolean;
   editorState: EditorState;
   onEditorTileAction: (col: number, row: number) => void;
@@ -44,6 +45,7 @@ interface OfficeCanvasProps {
 export function OfficeCanvas({
   officeState,
   onClick,
+  onFurnitureClick,
   isEditMode,
   editorState,
   onEditorTileAction,
@@ -464,15 +466,32 @@ export function OfficeCanvas({
         let cursor = 'default';
         if (hitId !== null) {
           cursor = 'pointer';
-        } else if (officeState.selectedAgentId !== null && tile) {
-          // Check if hovering over a clickable seat (available or own)
-          const seatId = officeState.getSeatAtTile(tile.col, tile.row);
-          if (seatId) {
-            const seat = officeState.seats.get(seatId);
-            if (seat) {
-              const selectedCh = officeState.characters.get(officeState.selectedAgentId);
-              if (!seat.assigned || (selectedCh && selectedCh.seatId === seatId)) {
-                cursor = 'pointer';
+        } else if (tile) {
+          // Check if hovering over clickable furniture (whiteboard)
+          const layout = officeState.getLayout();
+          const hitFurn = layout.furniture.find((f) => {
+            if (!f.type.startsWith('WHITEBOARD')) return false;
+            const entry = getCatalogEntry(f.type);
+            if (!entry) return false;
+            return (
+              tile.col >= f.col &&
+              tile.col < f.col + entry.footprintW &&
+              tile.row >= f.row &&
+              tile.row < f.row + entry.footprintH
+            );
+          });
+          if (hitFurn) {
+            cursor = 'pointer';
+          } else if (officeState.selectedAgentId !== null) {
+            // Check if hovering over a clickable seat (available or own)
+            const seatId = officeState.getSeatAtTile(tile.col, tile.row);
+            if (seatId) {
+              const seat = officeState.seats.get(seatId);
+              if (seat) {
+                const selectedCh = officeState.characters.get(officeState.selectedAgentId);
+                if (!seat.assigned || (selectedCh && selectedCh.seatId === seatId)) {
+                  cursor = 'pointer';
+                }
               }
             }
           }
@@ -688,6 +707,27 @@ export function OfficeCanvas({
         return;
       }
 
+      // No agent hit — check furniture click (whiteboard)
+      const tile = screenToTile(e.clientX, e.clientY);
+      if (tile && onFurnitureClick) {
+        const layout = officeState.getLayout();
+        const hitFurn = layout.furniture.find((f) => {
+          if (!f.type.startsWith('WHITEBOARD')) return false;
+          const entry = getCatalogEntry(f.type);
+          if (!entry) return false;
+          return (
+            tile.col >= f.col &&
+            tile.col < f.col + entry.footprintW &&
+            tile.row >= f.row &&
+            tile.row < f.row + entry.footprintH
+          );
+        });
+        if (hitFurn) {
+          onFurnitureClick(hitFurn.type, hitFurn.uid);
+          return;
+        }
+      }
+
       // No agent hit — check seat click while agent is selected
       if (officeState.selectedAgentId !== null) {
         const selectedCh = officeState.characters.get(officeState.selectedAgentId);
@@ -728,7 +768,7 @@ export function OfficeCanvas({
         officeState.cameraFollowId = null;
       }
     },
-    [officeState, onClick, screenToWorld, screenToTile, isEditMode],
+    [officeState, onClick, onFurnitureClick, screenToWorld, screenToTile, isEditMode],
   );
 
   const handleMouseLeave = useCallback(() => {

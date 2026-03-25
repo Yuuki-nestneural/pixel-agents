@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { BottomToolbar } from './components/BottomToolbar.js';
-import { ChatPanel } from './components/ChatPanel.js';
 import { DebugView } from './components/DebugView.js';
+import { WhiteboardPanel } from './components/WhiteboardPanel.js';
 import { ZoomControls } from './components/ZoomControls.js';
 import { PULSE_ANIMATION_DURATION_SEC } from './constants.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
@@ -160,7 +160,7 @@ function App() {
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
   const [chatPanelVisible, setChatPanelVisible] = useState(false);
 
-  // Auto-open chat panel when a question arrives
+  // Auto-open whiteboard panel when a question arrives
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'askUserQuestion') {
@@ -169,6 +169,12 @@ function App() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
+  }, []);
+
+  const handleFurnitureClick = useCallback((type: string) => {
+    if (type.startsWith('WHITEBOARD')) {
+      setChatPanelVisible((prev) => !prev);
+    }
   }, []);
 
   const handleToggleDebugMode = useCallback(() => setIsDebugMode((prev) => !prev), []);
@@ -266,6 +272,7 @@ function App() {
       <OfficeCanvas
         officeState={officeState}
         onClick={handleClick}
+        onFurnitureClick={handleFurnitureClick}
         isEditMode={editor.isEditMode}
         editorState={editorState}
         onEditorTileAction={editor.handleEditorTileAction}
@@ -387,7 +394,7 @@ function App() {
         />
       )}
 
-      <ChatPanel visible={chatPanelVisible} onClose={() => setChatPanelVisible(false)} />
+      <WhiteboardPanel visible={chatPanelVisible} onClose={() => setChatPanelVisible(false)} />
 
       {showMigrationNotice && (
         <div
