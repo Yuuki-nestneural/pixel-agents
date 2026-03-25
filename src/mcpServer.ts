@@ -90,9 +90,6 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   // Callback when quest board changes (set by extension.ts)
   onQuestChanged?: (quests: Quest[]) => void;
 
-  // Callback to forward Telegram replies to native LM Tool (set by extension.ts)
-  onTelegramReply?: (response: string) => void;
-
   // Callback to forward ask_user questions to webview (set by extension.ts)
   onAskUserForWebview?: (question: string) => void;
 
@@ -347,8 +344,6 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
               .then((reply) => {
                 if (reply?.text && this.pendingAskUser?.requestId === telegramRequestId) {
                   this.pendingAskUser = null;
-                  // Forward to native LM Tool if active
-                  this.onTelegramReply?.(reply.text);
                   resolve(reply.text);
                 }
               })
