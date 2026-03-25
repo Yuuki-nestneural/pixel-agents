@@ -20,6 +20,14 @@ interface ChatMessage {
   timestamp: number;
 }
 
+interface ChatLogEntry {
+  id: number;
+  timestamp: number;
+  agentName: string;
+  type: string;
+  message: string;
+}
+
 type Tab = 'quests' | 'chat';
 
 /* ── Component ──────────────────────────────────────────────── */
@@ -46,6 +54,30 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
         ]);
         setPendingQuestionId(msg.id);
         setTab('chat'); // auto-switch to chat tab
+      } else if (msg.type === 'chatLogEntry') {
+        // Live chat log entry from the backend
+        const e = msg.entry;
+        if (!e) return;
+        const chatType = e.type === 'user_reply' ? 'response' : 'question';
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: String(e.id),
+            type: chatType,
+            text: `[${e.agentName}] ${e.message}`,
+            timestamp: e.timestamp,
+          },
+        ]);
+      } else if (msg.type === 'chatLogBulk') {
+        // Bulk restore of persisted chat entries
+        const entries = msg.entries ?? [];
+        const restored = entries.map((e: ChatLogEntry) => ({
+          id: String(e.id),
+          type: e.type === 'user_reply' ? 'response' : 'question',
+          text: `[${e.agentName}] ${e.message}`,
+          timestamp: e.timestamp,
+        }));
+        setChatMessages(restored);
       }
     };
     window.addEventListener('message', handler);
@@ -143,9 +175,9 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
           borderRadius: 0,
           padding: '4px',
           boxShadow: 'var(--pixel-shadow)',
-          width: '92%',
-          maxWidth: 440,
-          maxHeight: '85%',
+          width: '95%',
+          maxWidth: 600,
+          maxHeight: '90%',
           display: 'flex',
           flexDirection: 'column',
         }}
@@ -203,7 +235,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 120, maxHeight: 400 }}>
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 120, maxHeight: 500 }}>
           {tab === 'quests' && (
             <div style={{ padding: '6px 10px' }}>
               {quests.length === 0 && (

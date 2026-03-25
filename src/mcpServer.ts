@@ -108,6 +108,26 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   }
 
   /**
+   * Restore quests from persisted data (called on startup).
+   */
+  restoreQuests(quests: Quest[]): void {
+    this.quests.clear();
+    for (const q of quests) {
+      this.quests.set(q.id, q);
+    }
+    // Advance nextQuestId past restored IDs
+    if (quests.length > 0) {
+      const maxNum = Math.max(
+        ...quests.map((q) => {
+          const m = q.id.match(/^quest-(\d+)$/);
+          return m ? parseInt(m[1], 10) : 0;
+        }),
+      );
+      this.nextQuestId = maxNum + 1;
+    }
+  }
+
+  /**
    * Resolve the effective agent name from an agent_id.
    * If agent_id is provided and registered, use that agent's name.
    * Otherwise, fall back to the provided agent_name.

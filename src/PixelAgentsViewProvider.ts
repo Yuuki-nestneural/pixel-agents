@@ -69,6 +69,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   // Callback for ask_user responses from the webview chat
   onAskUserResponse?: (response: string) => void;
 
+  // Callback fired after webviewReady is handled (for sending persisted data)
+  onWebviewReady?: () => void;
+
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   private get extensionUri(): vscode.Uri {
@@ -341,6 +344,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
         sendExistingAgents(this.agents, this.context, this.webview);
         this.sendExistingCopilotAgents();
+
+        // Notify extension.ts so it can send persisted quests/chat
+        this.onWebviewReady?.();
       } else if (message.type === 'openSessionsFolder') {
         const projectDir = getProjectDirPath();
         if (projectDir && fs.existsSync(projectDir)) {

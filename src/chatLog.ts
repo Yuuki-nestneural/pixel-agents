@@ -18,19 +18,36 @@ export interface ChatLogEntry {
   targetAgentName?: string;
 }
 
+const WORKSPACE_KEY_CHAT_LOG = 'pixelAgents.chatLog';
+
 /**
  * Manages the chat log for all agent interactions.
  * Stores messages from ask_user, notify_user, agent-to-agent messaging,
  * and user replies. Sends updates to the webview.
+ * Optionally persists to VS Code workspaceState.
  */
 export class ChatLog implements vscode.Disposable {
   private entries: ChatLogEntry[] = [];
   private nextId = 1;
   private readonly maxEntries = 500;
   private readonly onDidChangeEmitter = new vscode.EventEmitter<ChatLogEntry>();
+  private workspaceState?: vscode.Memento;
 
   /** Fires whenever a new entry is added */
   readonly onDidChange = this.onDidChangeEmitter.event;
+
+  /**
+   * Enable persistence by attaching a workspaceState memento.
+   * Restores any previously saved entries.
+   */
+  setWorkspaceState(state: vscode.Memento): void {
+    this.workspaceState = state;
+    const saved = state.get<ChatLogEntry[]>(WORKSPACE_KEY_CHAT_LOG, []);
+    if (saved.length > 0) {
+      this.entries = saved;
+      this.nextId = Math.max(...saved.map((e) => e.id)) + 1;
+    }
+  }
 
   /**
    * Add an entry to the chat log.
@@ -48,8 +65,13 @@ export class ChatLog implements vscode.Disposable {
       this.entries = this.entries.slice(-this.maxEntries);
     }
 
+    this.persist();
     this.onDidChangeEmitter.fire(full);
     return full;
+  }
+
+  private persist(): void {
+    this.workspaceState?.update(WORKSPACE_KEY_CHAT_LOG, this.entries);
   }
 
   /**

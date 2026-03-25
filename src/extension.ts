@@ -21,10 +21,20 @@ let copilotDetectorInstance: CopilotDetector | undefined;
 let chatLogInstance: ChatLog | undefined;
 let askUserToolInstance: AskUserTool | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
+
+const WORKSPACE_KEY_QUESTS = 'pixelAgents.quests';
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionContext = context;
+
   outputChannel = vscode.window.createOutputChannel('Pixel Agents');
   context.subscriptions.push(outputChannel);
+
+  // Create chat log early so ask_user (LM Tool) entries persist even without MCP server
+  chatLogInstance = new ChatLog();
+  chatLogInstance.setWorkspaceState(context.workspaceState);
+  context.subscriptions.push(chatLogInstance);
 
   const provider = new PixelAgentsViewProvider(context);
   providerInstance = provider;
@@ -89,6 +99,29 @@ export function activate(context: vscode.ExtensionContext) {
   provider.onAskUserResponse = (response: string) => {
     if (askUserToolInstance?.submitResponse(response)) {
       outputChannel?.appendLine('[AskUser] Response submitted via webview');
+    }
+  };
+
+  // Send persisted quests and chat entries when webview loads
+  provider.onWebviewReady = () => {
+    const webview = provider.webviewView?.webview;
+    if (!webview) return;
+
+    // Send persisted chat entries
+    const chatEntries = chatLogInstance?.getEntries() ?? [];
+    if (chatEntries.length > 0) {
+      webview.postMessage({ type: 'chatLogBulk', entries: chatEntries });
+      outputChannel?.appendLine(`[Webview] Sent ${chatEntries.length} persisted chat entries`);
+    }
+
+    // Send persisted quests
+    const quests = context.workspaceState.get<import('./mcpServer.js').Quest[]>(
+      WORKSPACE_KEY_QUESTS,
+      [],
+    );
+    if (quests.length > 0) {
+      webview.postMessage({ type: 'questBoardUpdate', quests });
+      outputChannel?.appendLine(`[Webview] Sent ${quests.length} persisted quests`);
     }
   };
 
@@ -173,11 +206,23 @@ async function startMcpServer(): Promise<void> {
     mcpServerInstance.setCopilotDetector(copilotDetectorInstance);
   }
 
-  // Wire chat log
+  // Wire chat log (already created in activate())
   if (!chatLogInstance) {
     chatLogInstance = new ChatLog();
   }
   mcpServerInstance.setChatLog(chatLogInstance);
+
+  // Restore persisted quests
+  if (extensionContext) {
+    const savedQuests = extensionContext.workspaceState.get<import('./mcpServer.js').Quest[]>(
+      WORKSPACE_KEY_QUESTS,
+      [],
+    );
+    if (savedQuests.length > 0) {
+      mcpServerInstance.restoreQuests(savedQuests);
+      outputChannel?.appendLine(`[MCP] Restored ${savedQuests.length} persisted quests`);
+    }
+  }
 
   // Forward chat log entries to webview
   chatLogInstance.onDidChange((entry) => {
@@ -237,12 +282,14 @@ async function startMcpServer(): Promise<void> {
     });
   };
 
-  // Wire quest board updates to the webview
+  // Wire quest board updates to the webview + persist
   mcpServerInstance.onQuestChanged = (quests) => {
     providerInstance?.webviewView?.webview.postMessage({
       type: 'questBoardUpdate',
       quests,
     });
+    // Persist quests to workspaceState
+    extensionContext?.workspaceState.update(WORKSPACE_KEY_QUESTS, quests);
   };
 
   // Wire Telegram replies to the native LM Tool (ask_user)
