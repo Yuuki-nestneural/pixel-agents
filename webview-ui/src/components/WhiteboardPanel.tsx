@@ -106,14 +106,14 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
         position: 'absolute',
         top: 0,
         right: 0,
-        width: 360,
+        width: '100%',
         height: '100%',
         background: 'var(--vscode-sideBar-background, #1e1e1e)',
-        borderLeft: '2px solid var(--vscode-panel-border, #333)',
+        borderLeft: 'none',
         display: 'flex',
         flexDirection: 'column',
         zIndex: 60,
-        fontSize: '14px',
+        fontSize: '16px',
       }}
     >
       {/* Header */}
@@ -168,7 +168,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   ? '2px solid var(--vscode-focusBorder, #007acc)'
                   : '2px solid transparent',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '16px',
               fontWeight: tab === t ? 'bold' : 'normal',
             }}
           >
@@ -222,7 +222,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   </span>
                   <span
                     style={{
-                      fontSize: '12px',
+                      fontSize: '14px',
                       color: priorityColor[q.priority] ?? '#888',
                       textTransform: 'uppercase',
                     }}
@@ -234,14 +234,14 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   <div
                     style={{
                       color: 'var(--vscode-descriptionForeground)',
-                      fontSize: '13px',
+                      fontSize: '15px',
                       marginBottom: '4px',
                     }}
                   >
                     {q.description}
                   </div>
                 )}
-                <div style={{ fontSize: '12px', color: 'var(--vscode-descriptionForeground)' }}>
+                <div style={{ fontSize: '14px', color: 'var(--vscode-descriptionForeground)' }}>
                   {q.assignee && <span>👤 {q.assignee}</span>}
                   <span style={{ marginLeft: q.assignee ? 8 : 0 }}>
                     {q.status === 'done'
@@ -309,7 +309,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                         }),
                   }}
                 >
-                  <div style={{ fontSize: '12px', opacity: 0.6, marginBottom: '2px' }}>
+                  <div style={{ fontSize: '13px', opacity: 0.6, marginBottom: '2px' }}>
                     {msg.type === 'question' ? '🤖 Agent' : '👤 You'}
                   </div>
                   {msg.text}
@@ -321,10 +321,10 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
             {/* Input */}
             <div
               style={{
-                padding: '6px 8px',
+                padding: '8px 12px',
                 borderTop: '1px solid var(--vscode-panel-border, #333)',
                 display: 'flex',
-                gap: '6px',
+                gap: '8px',
               }}
             >
               <textarea
@@ -341,8 +341,8 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   color: 'var(--vscode-input-foreground, #ccc)',
                   border: '1px solid var(--vscode-input-border, #555)',
                   borderRadius: '2px',
-                  padding: '4px 8px',
-                  fontSize: '14px',
+                  padding: '6px 10px',
+                  fontSize: '16px',
                   resize: 'none',
                   outline: 'none',
                   fontFamily: 'inherit',
@@ -360,7 +360,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   borderRadius: '2px',
                   padding: '4px 12px',
                   cursor: pendingQuestionId ? 'pointer' : 'default',
-                  fontSize: '14px',
+                  fontSize: '16px',
                   alignSelf: 'flex-end',
                 }}
               >
