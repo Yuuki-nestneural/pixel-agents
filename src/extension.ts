@@ -97,8 +97,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Wire webview submit response for ask_user
   provider.onAskUserResponse = (response: string) => {
+    // Try native LM Tool first, then MCP server
     if (askUserToolInstance?.submitResponse(response)) {
-      outputChannel?.appendLine('[AskUser] Response submitted via webview');
+      outputChannel?.appendLine('[AskUser] Response submitted via webview → LM Tool');
+    }
+    if (mcpServerInstance?.submitAskUserResponse(response)) {
+      outputChannel?.appendLine('[AskUser] Response submitted via webview → MCP');
     }
   };
 

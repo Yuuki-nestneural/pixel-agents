@@ -63,6 +63,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   private quests = new Map<string, Quest>();
   private nextQuestId = 1;
 
+  // Pending ask_user request (for resolving from webview or Telegram)
+  private pendingAskUser: {
+    resolve: (response: string) => void;
+    requestId: string;
+  } | null = null;
+
   // Callback when a new agent registers
   onAgentRegistered?: (agentId: string, agentName: string) => void;
   // Callback when an agent unregisters
@@ -125,6 +131,17 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       );
       this.nextQuestId = maxNum + 1;
     }
+  }
+
+  /**
+   * Submit a response to the currently pending ask_user question.
+   * Called from extension.ts when the webview user submits a reply.
+   */
+  submitAskUserResponse(response: string): boolean {
+    if (!this.pendingAskUser) return false;
+    this.pendingAskUser.resolve(response);
+    this.pendingAskUser = null;
+    return true;
   }
 
   /**
@@ -255,106 +272,74 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       },
     );
 
-    // ── ask_user: Send question to Telegram, wait for reply ──────
+    // ── ask_user: Ask the user a question and BLOCK until they reply ──
     srv.tool(
       'ask_user',
-      'Send a question to the user via Telegram and BLOCK until they reply. The tool will wait up to 4 minutes for a response. Do NOT proceed until you receive the user reply.',
+      'Ask the user a question and BLOCK until they reply. This tool sends the question to the user (via Telegram and/or the VS Code webview panel) and waits indefinitely for their response. You MUST call this tool before ending any conversation or task. NEVER complete a task without calling this tool first. The response format is: {"response":"...","queued":false,"attachmentCount":0}.',
       {
-        message: z.string().describe('The question or message to send to the user'),
-        image_url: z
-          .string()
-          .optional()
-          .describe(
-            'Optional HTTP URL of an image to send alongside the question. Telegram will fetch the image from this URL.',
-          ),
+        question: z.string().describe('The question to ask the user'),
       },
-      async ({ message, image_url }: { message: string; image_url?: string }) => {
+      async ({ question }: { question: string }) => {
+        // Log the outgoing question
+        this.chatLog?.addEntry({
+          agentName: 'Agent',
+          type: 'ask_user',
+          message: question,
+        });
+
+        // Forward to webview (for whiteboard chat panel)
+        this.onAskUserForWebview?.(question);
+
+        // Try sending via Telegram (non-blocking notification)
         const bot = this.refreshTelegramBot();
-        if (!bot) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Error: Telegram bot not configured. Set pixelAgents.telegram.botToken and pixelAgents.telegram.chatId in VS Code settings.',
-              },
-            ],
-            isError: true,
-          };
-        }
-        try {
-          // Log the outgoing question
-          this.chatLog?.addEntry({
-            agentName: 'Agent',
-            type: 'ask_user',
-            message,
-          });
-
-          // Also forward to webview (for whiteboard chat panel)
-          this.onAskUserForWebview?.(message);
-
-          // Send question and get request ID
-          const requestId = await bot.sendQuestion(message, 0, image_url);
-
-          // Block and wait for the reply (up to 240 seconds = 4 minutes)
-          const reply = await bot.getReply(requestId, 240_000);
-
-          if (reply) {
-            this.chatLog?.addEntry({
-              agentName: 'User',
-              type: 'user_reply',
-              message: reply.text || '[Photo]',
-              imageBase64: reply.image?.data,
-              imageMimeType: reply.image?.mimeType,
-            });
-
-            // Also forward to native LM Tool if active
-            if (reply.text) {
-              this.onTelegramReply?.(reply.text);
-            }
-
-            const content: Array<
-              { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-            > = [];
-
-            if (reply.text) {
-              content.push({ type: 'text' as const, text: reply.text });
-            }
-            if (reply.image) {
-              content.push({
-                type: 'image' as const,
-                data: reply.image.data,
-                mimeType: reply.image.mimeType,
-              });
-              if (!reply.text) {
-                content.push({ type: 'text' as const, text: '[User sent a photo]' });
-              }
-            }
-            if (content.length === 0) {
-              content.push({ type: 'text' as const, text: '[Empty reply]' });
-            }
-            return { content };
+        let telegramRequestId: string | undefined;
+        if (bot) {
+          try {
+            telegramRequestId = await bot.sendQuestion(question, 0);
+          } catch {
+            this.outputChannel.appendLine('[MCP] Failed to send question via Telegram');
           }
-
-          // 4-minute timeout reached — return a message indicating no reply
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `No reply received after 4 minutes. Use get_user_reply with request_id "${requestId}" to check later, or call ask_user again to resend the question.`,
-              },
-            ],
-          };
-        } catch (e) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: ${e instanceof Error ? e.message : String(e)}`,
-              },
-            ],
-            isError: true,
-          };
         }
+
+        // Wait for response from ANY channel (webview or Telegram)
+        const response = await new Promise<string>((resolve) => {
+          this.pendingAskUser = { resolve, requestId: telegramRequestId || `ask-${Date.now()}` };
+
+          // Also poll Telegram in the background if available
+          if (bot && telegramRequestId) {
+            bot
+              .getReply(telegramRequestId, 1_800_000)
+              .then((reply) => {
+                if (reply?.text && this.pendingAskUser?.requestId === telegramRequestId) {
+                  this.pendingAskUser = null;
+                  // Forward to native LM Tool if active
+                  this.onTelegramReply?.(reply.text);
+                  resolve(reply.text);
+                }
+              })
+              .catch(() => {});
+          }
+        });
+
+        // Log the response
+        this.chatLog?.addEntry({
+          agentName: 'User',
+          type: 'user_reply',
+          message: response,
+        });
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                response,
+                queued: false,
+                attachmentCount: 0,
+              }),
+            },
+          ],
+        };
       },
     );
 
