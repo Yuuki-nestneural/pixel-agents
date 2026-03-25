@@ -81,6 +81,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   // Callback when quest board changes (set by extension.ts)
   onQuestChanged?: (quests: Quest[]) => void;
 
+  // Callback to forward Telegram replies to native LM Tool (set by extension.ts)
+  onTelegramReply?: (response: string) => void;
+
+  // Callback to forward ask_user questions to webview (set by extension.ts)
+  onAskUserForWebview?: (question: string) => void;
+
   constructor(private readonly outputChannel: vscode.OutputChannel) {
     const config = vscode.workspace.getConfiguration('pixelAgents');
     this.port = config.get<number>('mcp.port', MCP_DEFAULT_PORT);
@@ -232,13 +238,9 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     // ── ask_user: Send question to Telegram, wait for reply ──────
     srv.tool(
       'ask_user',
-      'Send a question to the user via Telegram and wait for their reply. Returns a request_id. If the reply arrives quickly, it is returned directly. Otherwise, use get_user_reply to poll for the response. Supports sending an image alongside the question.',
+      'Send a question to the user via Telegram and BLOCK until they reply. The tool will wait up to 4 minutes for a response. Do NOT proceed until you receive the user reply.',
       {
         message: z.string().describe('The question or message to send to the user'),
-        timeout_seconds: z
-          .number()
-          .optional()
-          .describe('Max seconds to wait for reply (0 or omit for no limit)'),
         image_url: z
           .string()
           .optional()
@@ -246,15 +248,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             'Optional HTTP URL of an image to send alongside the question. Telegram will fetch the image from this URL.',
           ),
       },
-      async ({
-        message,
-        timeout_seconds,
-        image_url,
-      }: {
-        message: string;
-        timeout_seconds?: number;
-        image_url?: string;
-      }) => {
+      async ({ message, image_url }: { message: string; image_url?: string }) => {
         const bot = this.refreshTelegramBot();
         if (!bot) {
           return {
@@ -268,8 +262,6 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           };
         }
         try {
-          const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : 0;
-
           // Log the outgoing question
           this.chatLog?.addEntry({
             agentName: 'Agent',
@@ -277,14 +269,16 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             message,
           });
 
-          // Send question and get request ID (non-blocking)
-          const requestId = await bot.sendQuestion(message, timeoutMs, image_url);
+          // Also forward to webview (for whiteboard chat panel)
+          this.onAskUserForWebview?.(message);
 
-          // Wait briefly (up to 15 seconds) for an immediate reply to avoid unnecessary polling
-          const reply = await bot.getReply(requestId, 15000);
+          // Send question and get request ID
+          const requestId = await bot.sendQuestion(message, 0, image_url);
+
+          // Block and wait for the reply (up to 240 seconds = 4 minutes)
+          const reply = await bot.getReply(requestId, 240_000);
 
           if (reply) {
-            // Reply arrived quickly — return it directly
             this.chatLog?.addEntry({
               agentName: 'User',
               type: 'user_reply',
@@ -292,6 +286,11 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
               imageBase64: reply.image?.data,
               imageMimeType: reply.image?.mimeType,
             });
+
+            // Also forward to native LM Tool if active
+            if (reply.text) {
+              this.onTelegramReply?.(reply.text);
+            }
 
             const content: Array<
               { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
@@ -316,12 +315,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             return { content };
           }
 
-          // Reply not yet received — return request_id for polling
+          // 4-minute timeout reached — return a message indicating no reply
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Message sent. Reply not yet received. Use get_user_reply with request_id "${requestId}" to check for responses. You can continue working while waiting.`,
+                text: `No reply received after 4 minutes. Use get_user_reply with request_id "${requestId}" to check later, or call ask_user again to resend the question.`,
               },
             ],
           };

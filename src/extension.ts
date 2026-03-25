@@ -245,6 +245,23 @@ async function startMcpServer(): Promise<void> {
     });
   };
 
+  // Wire Telegram replies to the native LM Tool (ask_user)
+  mcpServerInstance.onTelegramReply = (response: string) => {
+    if (askUserToolInstance?.submitResponse(response)) {
+      outputChannel?.appendLine('[MCP→LMTool] Telegram reply forwarded to native ask_user');
+    }
+  };
+
+  // Wire MCP ask_user questions to the webview panel
+  mcpServerInstance.onAskUserForWebview = (question: string) => {
+    const id = `mcp-${Date.now()}`;
+    providerInstance?.webviewView?.webview.postMessage({
+      type: 'askUserQuestion',
+      id,
+      question,
+    });
+  };
+
   try {
     await mcpServerInstance.start();
   } catch (e) {
