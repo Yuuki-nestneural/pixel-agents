@@ -31,7 +31,7 @@ Then press `F5` in VS Code to launch the Extension Development Host with the ext
 If you have a packaged `.vsix` file:
 
 ```bash
-code --install-extension pixel-agents-1.1.1.vsix
+code --install-extension pixel-agents-1.3.0.vsix
 ```
 
 ---
