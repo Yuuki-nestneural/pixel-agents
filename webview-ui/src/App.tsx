@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { BottomToolbar } from './components/BottomToolbar.js';
+import { ChatPanel } from './components/ChatPanel.js';
 import { DebugView } from './components/DebugView.js';
 import { ZoomControls } from './components/ZoomControls.js';
 import { PULSE_ANIMATION_DURATION_SEC } from './constants.js';
@@ -157,6 +158,18 @@ function App() {
 
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
+  const [chatPanelVisible, setChatPanelVisible] = useState(false);
+
+  // Auto-open chat panel when a question arrives
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'askUserQuestion') {
+        setChatPanelVisible(true);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   const handleToggleDebugMode = useCallback(() => setIsDebugMode((prev) => !prev), []);
   const handleToggleAlwaysShowOverlay = useCallback(
@@ -373,6 +386,8 @@ function App() {
           onSelectAgent={handleSelectAgent}
         />
       )}
+
+      <ChatPanel visible={chatPanelVisible} onClose={() => setChatPanelVisible(false)} />
 
       {showMigrationNotice && (
         <div

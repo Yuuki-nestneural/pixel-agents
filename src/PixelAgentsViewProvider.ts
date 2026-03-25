@@ -66,6 +66,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   // Track active Copilot agents (for re-sending on webview reload)
   private copilotAgents = new Map<number, { label: string; status: string }>();
 
+  // Callback for ask_user responses from the webview chat
+  onAskUserResponse?: (response: string) => void;
+
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   private get extensionUri(): vscode.Uri {
@@ -164,6 +167,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         writeLayoutToFile(message.layout as Record<string, unknown>);
       } else if (message.type === 'setSoundEnabled') {
         this.context.globalState.update(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
+      } else if (message.type === 'askUserResponse') {
+        // User submitted a response to an ask_user question from the webview chat
+        if (message.response && typeof message.response === 'string') {
+          this.onAskUserResponse?.(message.response);
+        }
       } else if (message.type === 'webviewReady') {
         restoreAgents(
           this.context,

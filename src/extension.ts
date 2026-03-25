@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { AskUserTool } from './askUserTool.js';
 import { ChatLog } from './chatLog.js';
 import {
   COMMAND_EXPORT_DEFAULT_LAYOUT,
@@ -18,6 +19,7 @@ let providerInstance: PixelAgentsViewProvider | undefined;
 let mcpServerInstance: PixelAgentsMcpServer | undefined;
 let copilotDetectorInstance: CopilotDetector | undefined;
 let chatLogInstance: ChatLog | undefined;
+let askUserToolInstance: AskUserTool | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -40,6 +42,55 @@ export function activate(context: vscode.ExtensionContext) {
       provider.exportDefaultLayout();
     }),
   );
+
+  // ── Native LM Tool: ask_user ─────────────────────────────
+  // Registered via vscode.lm.registerTool — no MCP timeout issues.
+  // Copilot controls cancellation via CancellationToken, tool can wait indefinitely.
+  askUserToolInstance = new AskUserTool();
+  context.subscriptions.push(askUserToolInstance.register());
+  context.subscriptions.push(askUserToolInstance);
+
+  // When a question arrives, show it in the webview
+  askUserToolInstance.onQuestion(({ id, question }) => {
+    outputChannel?.appendLine(`[AskUser] Question ${id}: ${question.slice(0, 80)}...`);
+    provider.webviewView?.webview.postMessage({
+      type: 'askUserQuestion',
+      id,
+      question,
+    });
+
+    // Also log to chat log
+    chatLogInstance?.addEntry({
+      agentName: 'Agent',
+      type: 'ask_user',
+      message: question,
+    });
+
+    // Also forward to Telegram (non-blocking) if configured
+    if (mcpServerInstance?.isRunning()) {
+      const bot = (mcpServerInstance as any).telegramBot;
+      if (bot) {
+        bot.notifyUser(`🤖 Agent asks:\n${question}`).catch(() => {});
+      }
+    }
+  });
+
+  // When the user answers, log it
+  askUserToolInstance.onAnswer(({ question, response }) => {
+    outputChannel?.appendLine(`[AskUser] User replied: ${response.slice(0, 80)}`);
+    chatLogInstance?.addEntry({
+      agentName: 'User',
+      type: 'user_reply',
+      message: response,
+    });
+  });
+
+  // Wire webview submit response for ask_user
+  provider.onAskUserResponse = (response: string) => {
+    if (askUserToolInstance?.submitResponse(response)) {
+      outputChannel?.appendLine('[AskUser] Response submitted via webview');
+    }
+  };
 
   // ── Copilot Detection ────────────────────────────────────
   const config = vscode.workspace.getConfiguration('pixelAgents');
@@ -269,4 +320,5 @@ export function deactivate() {
   mcpServerInstance?.dispose();
   copilotDetectorInstance?.dispose();
   chatLogInstance?.dispose();
+  askUserToolInstance?.dispose();
 }

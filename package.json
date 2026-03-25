@@ -79,6 +79,27 @@
         "label": "Pixel Agents MCP Server"
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "ask_user",
+        "tags": ["confirmation", "user-interaction", "pixel-agents", "required", "mandatory"],
+        "toolReferenceName": "askUser",
+        "displayName": "Ask User (Pixel Agents)",
+        "modelDescription": "Use this tool to ask the user a question and wait for their response. The question is displayed in the Pixel Agents chat panel. Use this when you need user input, approval, clarification, or feedback. The tool will wait indefinitely until the user responds — no timeout.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(question)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "description": "The question or prompt to display to the user"
+            }
+          },
+          "required": ["question"]
+        }
+      }
+    ],
     "viewsContainers": {
       "panel": [
         {
