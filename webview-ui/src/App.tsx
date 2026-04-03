@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { DebugView } from './components/DebugView.js';
+import { StatsBar } from './components/StatsBar.js';
 import { WhiteboardPanel } from './components/WhiteboardPanel.js';
 import { ZoomControls } from './components/ZoomControls.js';
 import { PULSE_ANIMATION_DURATION_SEC } from './constants.js';
@@ -162,13 +163,20 @@ function App() {
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
   const [chatPanelVisible, setChatPanelVisible] = useState(false);
   const [hasPendingQuestion, setHasPendingQuestion] = useState(false);
+  const [questStats, setQuestStats] = useState({ total: 0, completed: 0 });
 
-  // Auto-open whiteboard panel when a question arrives
+  // Auto-open whiteboard panel when a question arrives, track quest stats
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'askUserQuestion') {
         setChatPanelVisible(true);
         setHasPendingQuestion(true);
+      } else if (event.data?.type === 'questBoardUpdate') {
+        const quests = event.data.quests ?? [];
+        setQuestStats({
+          total: quests.length,
+          completed: quests.filter((q: { status: string }) => q.status === 'done').length,
+        });
       }
     };
     window.addEventListener('message', handler);
@@ -299,6 +307,16 @@ function App() {
       />
 
       {!isDebugMode && <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />}
+
+      {!isDebugMode && !editor.isEditMode && (
+        <StatsBar
+          agents={agents}
+          agentTools={agentTools}
+          agentStatuses={agentStatuses}
+          questCount={questStats.total}
+          completedQuestCount={questStats.completed}
+        />
+      )}
 
       {/* Vignette overlay */}
       <div
