@@ -86,6 +86,8 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   onAgentRegistered?: (agentId: string, agentName: string) => void;
   // Callback when an agent unregisters
   onAgentUnregistered?: (agentId: string, agentName: string) => void;
+  // Callback when agent list changes (register/unregister)
+  onAgentListChanged?: (agents: Array<{ id: string; name: string }>) => void;
 
   // Callbacks for subagent events (set by extension.ts)
   onSubagentActivity?: (
@@ -121,6 +123,11 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
    */
   getQuestList(): Quest[] {
     return [...this.quests.values()];
+  }
+
+  /** Get list of registered agents for the webview dashboard */
+  getRegisteredAgentList(): Array<{ id: string; name: string }> {
+    return [...this.registeredAgents.entries()].map(([id, name]) => ({ id, name }));
   }
 
   /**
@@ -304,6 +311,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           this.copilotDetector.reportMcpActivity(displayName, 'register', 'Joining office');
         }
         this.onAgentRegistered?.(agentId, displayName);
+        this.onAgentListChanged?.(this.getRegisteredAgentList());
 
         return {
           content: [
@@ -336,6 +344,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           this.copilotDetector.reportMcpIdle(name);
         }
         this.onAgentUnregistered?.(agent_id, name);
+        this.onAgentListChanged?.(this.getRegisteredAgentList());
         return {
           content: [{ type: 'text' as const, text: 'Agent unregistered.' }],
         };

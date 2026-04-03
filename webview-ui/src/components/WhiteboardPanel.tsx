@@ -33,7 +33,12 @@ interface ChatLogEntry {
   imageMimeType?: string;
 }
 
-type Tab = 'quests' | 'chat';
+type Tab = 'quests' | 'chat' | 'agents';
+
+interface RegisteredAgent {
+  id: string;
+  name: string;
+}
 
 /* ── Quest Card ─────────────────────────────────────────────── */
 
@@ -113,6 +118,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
   const [tab, setTab] = useState<Tab>('quests');
   const [quests, setQuests] = useState<Quest[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [registeredAgents, setRegisteredAgents] = useState<RegisteredAgent[]>([]);
   const [pendingQuestionId, setPendingQuestionId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [pastedImageUrl, setPastedImageUrl] = useState<string | null>(null);
@@ -168,6 +174,8 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
               : undefined,
         }));
         setChatMessages(restored);
+      } else if (msg.type === 'registeredAgentsUpdate') {
+        setRegisteredAgents(msg.agents ?? []);
       }
     };
     window.addEventListener('message', handler);
@@ -339,7 +347,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
 
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid var(--pixel-border)' }}>
-          {(['quests', 'chat'] as Tab[]).map((t) => (
+          {(['quests', 'chat', 'agents'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -351,9 +359,14 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                 fontWeight: tab === t ? 'bold' : 'normal',
               }}
             >
-              {t === 'quests' ? 'Quests' : 'Chat'}
+              {t === 'quests' ? 'Quests' : t === 'agents' ? 'Agents' : 'Chat'}
               {t === 'chat' && pendingQuestionId && (
                 <span style={{ color: '#e74c3c', marginLeft: 6 }}>●</span>
+              )}
+              {t === 'agents' && registeredAgents.length > 0 && (
+                <span style={{ color: 'var(--pixel-accent)', marginLeft: 6, fontSize: '18px' }}>
+                  {registeredAgents.length}
+                </span>
               )}
             </button>
           ))}
@@ -562,6 +575,63 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {tab === 'agents' && (
+            <div style={{ padding: '6px 10px' }}>
+              {registeredAgents.length === 0 && (
+                <div
+                  style={{
+                    color: 'rgba(255, 255, 255, 0.5)',
+                    textAlign: 'center',
+                    padding: '24px 8px',
+                    fontSize: '22px',
+                  }}
+                >
+                  No agents registered.
+                </div>
+              )}
+              {registeredAgents.map((agent) => (
+                <div
+                  key={agent.id}
+                  style={{
+                    padding: '8px 10px',
+                    marginBottom: '6px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--pixel-border)',
+                    borderLeft: '3px solid var(--pixel-accent)',
+                    borderRadius: 0,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontWeight: 'bold',
+                        color: 'rgba(255, 255, 255, 0.9)',
+                        fontSize: '22px',
+                      }}
+                    >
+                      {agent.name}
+                    </div>
+                    <div style={{ fontSize: '18px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                      {agent.id}
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      background: '#2ecc71',
+                      flexShrink: 0,
+                    }}
+                    title="Online"
+                  />
+                </div>
+              ))}
             </div>
           )}
         </div>

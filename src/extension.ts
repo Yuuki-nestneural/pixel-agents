@@ -90,6 +90,12 @@ export function activate(context: vscode.ExtensionContext) {
       webview.postMessage({ type: 'questBoardUpdate', quests });
       outputChannel?.appendLine(`[Webview] Sent ${quests.length} persisted quests`);
     }
+
+    // Send current registered agents
+    const registeredAgents = mcpServerInstance?.getRegisteredAgentList() ?? [];
+    if (registeredAgents.length > 0) {
+      webview.postMessage({ type: 'registeredAgentsUpdate', agents: registeredAgents });
+    }
   };
 
   // ── Copilot Detection ────────────────────────────────────
@@ -226,6 +232,14 @@ async function startMcpServer(): Promise<void> {
         providerInstance.removeCopilotAgent(id);
       }
     }
+  };
+
+  // Push registered agent list to webview on register/unregister
+  mcpServerInstance.onAgentListChanged = (agents) => {
+    providerInstance?.webviewView?.webview.postMessage({
+      type: 'registeredAgentsUpdate',
+      agents,
+    });
   };
 
   // Wire subagent events to the webview
