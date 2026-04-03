@@ -8,6 +8,7 @@ import {
   WANDER_MOVES_BEFORE_REST_MIN,
   WANDER_PAUSE_MAX_SEC,
   WANDER_PAUSE_MIN_SEC,
+  WANDER_SOCIAL_CHANCE,
 } from '../../constants.js';
 import { findPath } from '../layout/tileMap.js';
 import type { CharacterSprites } from '../sprites/spriteData.js';
@@ -93,6 +94,7 @@ export function updateCharacter(
   seats: Map<string, Seat>,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  otherIdleCharacters?: Array<{ tileCol: number; tileRow: number }>,
 ): void {
   ch.frameTimer += dt;
 
@@ -184,7 +186,36 @@ export function updateCharacter(
           }
         }
         if (walkableTiles.length > 0) {
-          const target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+          let target: { col: number; row: number } | null = null;
+
+          // Social wandering: sometimes walk toward another idle character
+          if (
+            otherIdleCharacters &&
+            otherIdleCharacters.length > 0 &&
+            Math.random() < WANDER_SOCIAL_CHANCE
+          ) {
+            const other =
+              otherIdleCharacters[Math.floor(Math.random() * otherIdleCharacters.length)];
+            // Pick a walkable tile adjacent to the other character
+            const adjacentOffsets = [
+              { dc: -1, dr: 0 },
+              { dc: 1, dr: 0 },
+              { dc: 0, dr: -1 },
+              { dc: 0, dr: 1 },
+            ];
+            const candidates = adjacentOffsets
+              .map((o) => ({ col: other.tileCol + o.dc, row: other.tileRow + o.dr }))
+              .filter((t) => walkableTiles.some((w) => w.col === t.col && w.row === t.row));
+            if (candidates.length > 0) {
+              target = candidates[Math.floor(Math.random() * candidates.length)];
+            }
+          }
+
+          // Fallback: random walkable tile
+          if (!target) {
+            target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+          }
+
           const path = findPath(
             ch.tileCol,
             ch.tileRow,

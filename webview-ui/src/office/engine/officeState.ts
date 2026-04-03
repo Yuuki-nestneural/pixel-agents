@@ -653,6 +653,15 @@ export class OfficeState {
     }
 
     const toDelete: number[] = [];
+
+    // Collect idle characters for social wandering
+    const idleChars: Array<{ tileCol: number; tileRow: number }> = [];
+    for (const ch of this.characters.values()) {
+      if (!ch.isActive && ch.state !== CharacterState.TYPE && !ch.matrixEffect) {
+        idleChars.push({ tileCol: ch.tileCol, tileRow: ch.tileRow });
+      }
+    }
+
     for (const ch of this.characters.values()) {
       // Handle matrix effect animation
       if (ch.matrixEffect) {
@@ -672,9 +681,21 @@ export class OfficeState {
       }
 
       // Temporarily unblock own seat so character can pathfind to it
-      this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
-      );
+      this.withOwnSeatUnblocked(ch, () => {
+        // Filter out self from idle characters list for social wandering
+        const others = idleChars.filter(
+          (o) => o.tileCol !== ch.tileCol || o.tileRow !== ch.tileRow,
+        );
+        updateCharacter(
+          ch,
+          dt,
+          this.walkableTiles,
+          this.seats,
+          this.tileMap,
+          this.blockedTiles,
+          others,
+        );
+      });
 
       // Tick bubble timer for waiting bubbles
       if (ch.bubbleType === 'waiting') {
