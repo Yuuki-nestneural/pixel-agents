@@ -12,6 +12,8 @@ import {
   INACTIVE_SEAT_TIMER_RANGE_SEC,
   PALETTE_COUNT,
   WAITING_BUBBLE_DURATION_SEC,
+  WEATHER_CYCLE_MAX_SEC,
+  WEATHER_CYCLE_MIN_SEC,
 } from '../../constants.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
@@ -34,6 +36,16 @@ import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '..
 import { createCharacter, type InteractableFurniture, updateCharacter } from './characters.js';
 import { matrixEffectSeeds } from './matrixEffect.js';
 
+export type WeatherState = 'clear' | 'rain' | 'night';
+const WEATHER_STATES: WeatherState[] = ['clear', 'rain', 'night'];
+
+/** Maps weather state to the WINDOW_ sprite suffix */
+const WEATHER_WINDOW_MAP: Record<WeatherState, string> = {
+  clear: 'WINDOW_CLEAR',
+  rain: 'WINDOW_RAIN',
+  night: 'WINDOW_NIGHT',
+};
+
 export class OfficeState {
   layout: OfficeLayout;
   tileMap: TileTypeVal[][];
@@ -54,6 +66,10 @@ export class OfficeState {
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map();
   private nextSubagentId = -1;
+  /** Current weather state affecting window sprites */
+  weatherState: WeatherState = 'clear';
+  /** Countdown timer until next weather change */
+  private weatherTimer: number;
 
   constructor(layout?: OfficeLayout) {
     this.layout = layout || createDefaultLayout();
@@ -63,6 +79,10 @@ export class OfficeState {
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     this.interactableFurniture = this.buildInteractableFurniture();
+    // Start with a random weather and schedule first change
+    this.weatherState = WEATHER_STATES[Math.floor(Math.random() * WEATHER_STATES.length)];
+    this.weatherTimer =
+      WEATHER_CYCLE_MIN_SEC + Math.random() * (WEATHER_CYCLE_MAX_SEC - WEATHER_CYCLE_MIN_SEC);
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -572,14 +592,28 @@ export class OfficeState {
       }
     }
 
-    if (autoOnTiles.size === 0) {
+    const hasAutoOn = autoOnTiles.size > 0;
+    const weatherWindowType = WEATHER_WINDOW_MAP[this.weatherState];
+    const hasWindows = this.layout.furniture.some((item) => item.type.startsWith('WINDOW_'));
+
+    // Fast path: nothing to modify
+    if (!hasAutoOn && !hasWindows) {
       this.furniture = layoutToFurnitureInstances(this.layout.furniture);
       return;
     }
 
-    // Build modified furniture list with auto-state and animation applied
+    // Build modified furniture list with auto-state, animation, and weather applied
     const animFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
+      // Weather: swap window sprites based on current weather state
+      if (item.type.startsWith('WINDOW_') && weatherWindowType) {
+        const targetEntry = getCatalogEntry(weatherWindowType);
+        if (targetEntry) {
+          return { ...item, type: weatherWindowType };
+        }
+      }
+
+      if (!hasAutoOn) return item;
       const entry = getCatalogEntry(item.type);
       if (!entry) return item;
       // Check if any tile of this furniture overlaps an auto-on tile
@@ -705,6 +739,17 @@ export class OfficeState {
   }
 
   update(dt: number): void {
+    // Weather cycling
+    this.weatherTimer -= dt;
+    if (this.weatherTimer <= 0) {
+      // Pick a different weather state
+      const otherStates = WEATHER_STATES.filter((s) => s !== this.weatherState);
+      this.weatherState = otherStates[Math.floor(Math.random() * otherStates.length)];
+      this.weatherTimer =
+        WEATHER_CYCLE_MIN_SEC + Math.random() * (WEATHER_CYCLE_MAX_SEC - WEATHER_CYCLE_MIN_SEC);
+      this.rebuildFurnitureInstances();
+    }
+
     // Furniture animation cycling
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     this.furnitureAnimTimer += dt;

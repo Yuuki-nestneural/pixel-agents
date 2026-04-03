@@ -21,6 +21,10 @@ export const FURNITURE_BUBBLE_DURATION_SEC = 3.0; // how long the furniture inte
 export const SEAT_REST_MIN_SEC = 120.0;
 export const SEAT_REST_MAX_SEC = 240.0;
 
+// ── Weather ──────────────────────────────────────────────────
+export const WEATHER_CYCLE_MIN_SEC = 300; // 5 min minimum between weather changes
+export const WEATHER_CYCLE_MAX_SEC = 600; // 10 min maximum between weather changes
+
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;
 export const MATRIX_TRAIL_LENGTH = 6;
