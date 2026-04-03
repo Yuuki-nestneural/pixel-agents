@@ -42,6 +42,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [pendingQuestionId, setPendingQuestionId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const [pastedImageUrl, setPastedImageUrl] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -114,19 +115,50 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
 
   const handleSendChat = useCallback(() => {
     const text = inputValue.trim();
-    if (!text) return;
+    if (!text && !pastedImageUrl) return;
     setChatMessages((prev) => [
       ...prev,
-      { id: `resp-${Date.now()}`, type: 'response', text, timestamp: Date.now() },
+      {
+        id: `resp-${Date.now()}`,
+        type: 'response',
+        text: text || '(image)',
+        timestamp: Date.now(),
+        imageDataUrl: pastedImageUrl ?? undefined,
+      },
     ]);
-    vscode.postMessage({ type: 'askUserResponse', response: text });
+    vscode.postMessage({
+      type: 'askUserResponse',
+      response: text || '(image)',
+      imageDataUrl: pastedImageUrl ?? undefined,
+    });
     setInputValue('');
+    setPastedImageUrl(null);
     // Only clear pending question if there was one (direct reply).
     // If no question was pending, this is a queued message for the next ask_user.
     if (pendingQuestionId) {
       setPendingQuestionId(null);
     }
-  }, [inputValue, pendingQuestionId]);
+  }, [inputValue, pendingQuestionId, pastedImageUrl]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            setPastedImageUrl(reader.result);
+          }
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -412,50 +444,87 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   padding: '8px 10px',
                   borderTop: '1px solid var(--pixel-border)',
                   display: 'flex',
-                  gap: '8px',
+                  flexDirection: 'column',
+                  gap: '6px',
                 }}
               >
-                <textarea
-                  ref={inputRef}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    pendingQuestionId ? 'Type your response...' : 'Type a message to queue...'
-                  }
-                  rows={2}
-                  style={{
-                    flex: 1,
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    color: 'rgba(255, 255, 255, 0.9)',
-                    border: '1px solid var(--pixel-border)',
-                    borderRadius: 0,
-                    padding: '6px 10px',
-                    fontSize: '20px',
-                    resize: 'none',
-                    outline: 'none',
-                    fontFamily: 'inherit',
-                  }}
-                />
-                <button
-                  onClick={handleSendChat}
-                  disabled={!inputValue.trim()}
-                  style={{
-                    background: inputValue.trim()
-                      ? 'var(--pixel-accent)'
-                      : 'rgba(255, 255, 255, 0.1)',
-                    color: '#fff',
-                    border: '2px solid var(--pixel-accent)',
-                    borderRadius: 0,
-                    padding: '6px 16px',
-                    cursor: inputValue.trim() ? 'pointer' : 'default',
-                    fontSize: '22px',
-                    alignSelf: 'flex-end',
-                    boxShadow: 'var(--pixel-shadow)',
-                  }}
-                >
-                  Send
-                </button>
+                {pastedImageUrl && (
+                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                    <img
+                      src={pastedImageUrl}
+                      alt="Pasted"
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: 120,
+                        borderRadius: 0,
+                        border: '1px solid var(--pixel-border)',
+                      }}
+                    />
+                    <button
+                      onClick={() => setPastedImageUrl(null)}
+                      style={{
+                        position: 'absolute',
+                        top: 2,
+                        right: 2,
+                        background: 'rgba(0, 0, 0, 0.7)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 0,
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        padding: '0 4px',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      X
+                    </button>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <textarea
+                    ref={inputRef}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder={
+                      pendingQuestionId ? 'Type your response...' : 'Type a message to queue...'
+                    }
+                    rows={2}
+                    style={{
+                      flex: 1,
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      color: 'rgba(255, 255, 255, 0.9)',
+                      border: '1px solid var(--pixel-border)',
+                      borderRadius: 0,
+                      padding: '6px 10px',
+                      fontSize: '20px',
+                      resize: 'none',
+                      outline: 'none',
+                      fontFamily: 'inherit',
+                    }}
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    disabled={!inputValue.trim() && !pastedImageUrl}
+                    style={{
+                      background:
+                        inputValue.trim() || pastedImageUrl
+                          ? 'var(--pixel-accent)'
+                          : 'rgba(255, 255, 255, 0.1)',
+                      color: '#fff',
+                      border: '2px solid var(--pixel-accent)',
+                      borderRadius: 0,
+                      padding: '6px 16px',
+                      cursor: inputValue.trim() || pastedImageUrl ? 'pointer' : 'default',
+                      fontSize: '22px',
+                      alignSelf: 'flex-end',
+                      boxShadow: 'var(--pixel-shadow)',
+                    }}
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           )}
