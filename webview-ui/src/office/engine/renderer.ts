@@ -34,6 +34,8 @@ import {
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
+  BUBBLE_BOOK_SPRITE,
+  BUBBLE_COFFEE_SPRITE,
   BUBBLE_PERMISSION_SPRITE,
   BUBBLE_WAITING_SPRITE,
   getCharacterSprites,
@@ -489,12 +491,27 @@ export function renderBubbles(
   for (const ch of characters) {
     if (!ch.bubbleType) continue;
 
-    const sprite =
-      ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE;
+    let sprite: SpriteData;
+    switch (ch.bubbleType) {
+      case 'permission':
+        sprite = BUBBLE_PERMISSION_SPRITE;
+        break;
+      case 'coffee':
+        sprite = BUBBLE_COFFEE_SPRITE;
+        break;
+      case 'book':
+        sprite = BUBBLE_BOOK_SPRITE;
+        break;
+      default:
+        sprite = BUBBLE_WAITING_SPRITE;
+        break;
+    }
 
-    // Compute opacity: permission = full, waiting = fade in last 0.5s
+    // Compute opacity: permission = full, timed bubbles fade in last 0.5s
     let alpha = 1.0;
-    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+    const isTimed =
+      ch.bubbleType === 'waiting' || ch.bubbleType === 'coffee' || ch.bubbleType === 'book';
+    if (isTimed && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
       alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC;
     }
 

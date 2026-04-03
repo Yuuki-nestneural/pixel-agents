@@ -16,6 +16,8 @@ export const WANDER_PAUSE_MAX_SEC = 20.0;
 export const WANDER_MOVES_BEFORE_REST_MIN = 3;
 export const WANDER_MOVES_BEFORE_REST_MAX = 6;
 export const WANDER_SOCIAL_CHANCE = 0.35; // 35% chance to walk near another idle character
+export const WANDER_FURNITURE_CHANCE = 0.25; // 25% chance to walk toward interactable furniture
+export const FURNITURE_BUBBLE_DURATION_SEC = 3.0; // how long the furniture interaction bubble shows
 export const SEAT_REST_MIN_SEC = 120.0;
 export const SEAT_REST_MAX_SEC = 240.0;
 

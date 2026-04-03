@@ -1,9 +1,11 @@
 import {
+  FURNITURE_BUBBLE_DURATION_SEC,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   TYPE_FRAME_DURATION_SEC,
   WALK_FRAME_DURATION_SEC,
   WALK_SPEED_PX_PER_SEC,
+  WANDER_FURNITURE_CHANCE,
   WANDER_MOVES_BEFORE_REST_MAX,
   WANDER_MOVES_BEFORE_REST_MIN,
   WANDER_PAUSE_MAX_SEC,
@@ -17,6 +19,14 @@ import { CharacterState, Direction, TILE_SIZE } from '../types.js';
 
 /** Tools that show reading animation instead of typing */
 const READING_TOOLS = new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']);
+
+export interface InteractableFurniture {
+  /** Walkable tile adjacent to the furniture item */
+  col: number;
+  row: number;
+  /** Bubble type to show when character arrives */
+  bubbleType: 'coffee' | 'book';
+}
 
 export function isReadingTool(tool: string | null): boolean {
   if (!tool) return false;
@@ -78,6 +88,7 @@ export function createCharacter(
     seatId,
     bubbleType: null,
     bubbleTimer: 0,
+    wanderBubble: null,
     seatTimer: 0,
     isSubagent: false,
     parentAgentId: null,
@@ -95,6 +106,7 @@ export function updateCharacter(
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
   otherIdleCharacters?: Array<{ tileCol: number; tileRow: number }>,
+  interactableFurniture?: InteractableFurniture[],
 ): void {
   ch.frameTimer += dt;
 
@@ -211,6 +223,19 @@ export function updateCharacter(
             }
           }
 
+          // Furniture interaction: sometimes walk toward interactable furniture
+          if (
+            !target &&
+            interactableFurniture &&
+            interactableFurniture.length > 0 &&
+            Math.random() < WANDER_FURNITURE_CHANCE
+          ) {
+            const furniture =
+              interactableFurniture[Math.floor(Math.random() * interactableFurniture.length)];
+            target = { col: furniture.col, row: furniture.row };
+            ch.wanderBubble = furniture.bubbleType;
+          }
+
           // Fallback: random walkable tile
           if (!target) {
             target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
@@ -289,6 +314,12 @@ export function updateCharacter(
             }
           }
           ch.state = CharacterState.IDLE;
+          // Show furniture interaction bubble if walking toward interactable furniture
+          if (ch.wanderBubble) {
+            ch.bubbleType = ch.wanderBubble;
+            ch.bubbleTimer = FURNITURE_BUBBLE_DURATION_SEC;
+            ch.wanderBubble = null;
+          }
           ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
         }
         ch.frame = 0;

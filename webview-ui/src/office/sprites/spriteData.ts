@@ -1,6 +1,8 @@
 import { adjustSprite } from '../colorize.js';
 import type { Direction, FloorColor, SpriteData } from '../types.js';
 import { Direction as Dir } from '../types.js';
+import bubbleBookData from './bubble-book.json';
+import bubbleCoffeeData from './bubble-coffee.json';
 import bubblePermissionData from './bubble-permission.json';
 import bubbleWaitingData from './bubble-waiting.json';
 
@@ -20,6 +22,12 @@ export const BUBBLE_PERMISSION_SPRITE: SpriteData = resolveBubbleSprite(bubblePe
 
 /** Waiting bubble: white square with green checkmark, and a tail pointer (11x13) */
 export const BUBBLE_WAITING_SPRITE: SpriteData = resolveBubbleSprite(bubbleWaitingData);
+
+/** Coffee bubble: white square with coffee cup icon, and a tail pointer (11x13) */
+export const BUBBLE_COFFEE_SPRITE: SpriteData = resolveBubbleSprite(bubbleCoffeeData);
+
+/** Book bubble: white square with open book icon, and a tail pointer (11x13) */
+export const BUBBLE_BOOK_SPRITE: SpriteData = resolveBubbleSprite(bubbleBookData);
 
 // ════════════════════════════════════════════════════════════════
 // Loaded character sprites (from PNG assets)

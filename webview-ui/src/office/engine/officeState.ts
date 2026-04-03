@@ -31,7 +31,7 @@ import type {
   TileType as TileTypeVal,
 } from '../types.js';
 import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
-import { createCharacter, updateCharacter } from './characters.js';
+import { createCharacter, type InteractableFurniture, updateCharacter } from './characters.js';
 import { matrixEffectSeeds } from './matrixEffect.js';
 
 export class OfficeState {
@@ -41,6 +41,7 @@ export class OfficeState {
   blockedTiles: Set<string>;
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
+  interactableFurniture: InteractableFurniture[];
   characters: Map<number, Character> = new Map();
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -61,6 +62,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.interactableFurniture = this.buildInteractableFurniture();
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -72,6 +74,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    this.interactableFurniture = this.buildInteractableFurniture();
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -520,6 +523,10 @@ export class OfficeState {
     const ch = this.characters.get(id);
     if (ch) {
       ch.isActive = active;
+      if (active) {
+        // Clear furniture interaction state when becoming active
+        ch.wanderBubble = null;
+      }
       if (!active) {
         // Sentinel -1: signals turn just ended, skip next seat rest timer.
         // Prevents the WALK handler from setting a 2-4 min rest on arrival.
@@ -599,6 +606,60 @@ export class OfficeState {
     this.furniture = layoutToFurnitureInstances(modifiedFurniture);
   }
 
+  /** Furniture type → bubble type mapping for interactable items */
+  private static readonly FURNITURE_BUBBLE_MAP: Record<string, 'coffee' | 'book'> = {
+    COFFEE: 'coffee',
+    COFFEE_TABLE: 'coffee',
+    BOOKSHELF: 'book',
+    DOUBLE_BOOKSHELF: 'book',
+  };
+
+  /** Build list of walkable tiles adjacent to interactable furniture */
+  private buildInteractableFurniture(): InteractableFurniture[] {
+    const result: InteractableFurniture[] = [];
+    const walkableSet = new Set(this.walkableTiles.map((t) => `${t.col},${t.row}`));
+    const adjacentOffsets = [
+      { dc: -1, dr: 0 },
+      { dc: 1, dr: 0 },
+      { dc: 0, dr: -1 },
+      { dc: 0, dr: 1 },
+    ];
+
+    for (const item of this.layout.furniture) {
+      // Match furniture type base (strip orientation/state suffixes)
+      const baseType = item.type.split('_').slice(0, -1).join('_');
+      const bubble =
+        OfficeState.FURNITURE_BUBBLE_MAP[item.type] ?? OfficeState.FURNITURE_BUBBLE_MAP[baseType];
+      if (!bubble) continue;
+
+      const entry = getCatalogEntry(item.type);
+      if (!entry) continue;
+
+      // Find walkable tiles adjacent to this furniture piece
+      for (let dr = 0; dr < entry.footprintH; dr++) {
+        for (let dc = 0; dc < entry.footprintW; dc++) {
+          const fc = item.col + dc;
+          const fr = item.row + dr;
+          for (const off of adjacentOffsets) {
+            const key = `${fc + off.dc},${fr + off.dr}`;
+            if (walkableSet.has(key)) {
+              result.push({ col: fc + off.dc, row: fr + off.dr, bubbleType: bubble });
+            }
+          }
+        }
+      }
+    }
+
+    // Deduplicate by position (keep first occurrence)
+    const seen = new Set<string>();
+    return result.filter((t) => {
+      const key = `${t.col},${t.row}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   setAgentTool(id: number, tool: string | null): void {
     const ch = this.characters.get(id);
     if (ch) {
@@ -630,15 +691,15 @@ export class OfficeState {
     }
   }
 
-  /** Dismiss bubble on click — permission: instant, waiting: quick fade */
+  /** Dismiss bubble on click — permission: instant, timed: quick fade */
   dismissBubble(id: number): void {
     const ch = this.characters.get(id);
     if (!ch || !ch.bubbleType) return;
     if (ch.bubbleType === 'permission') {
       ch.bubbleType = null;
       ch.bubbleTimer = 0;
-    } else if (ch.bubbleType === 'waiting') {
-      // Trigger immediate fade (0.3s remaining)
+    } else {
+      // Trigger immediate fade (0.3s remaining) for waiting/coffee/book
       ch.bubbleTimer = Math.min(ch.bubbleTimer, DISMISS_BUBBLE_FAST_FADE_SEC);
     }
   }
@@ -694,11 +755,12 @@ export class OfficeState {
           this.tileMap,
           this.blockedTiles,
           others,
+          this.interactableFurniture,
         );
       });
 
-      // Tick bubble timer for waiting bubbles
-      if (ch.bubbleType === 'waiting') {
+      // Tick bubble timer for timed bubbles (waiting, coffee, book)
+      if (ch.bubbleType === 'waiting' || ch.bubbleType === 'coffee' || ch.bubbleType === 'book') {
         ch.bubbleTimer -= dt;
         if (ch.bubbleTimer <= 0) {
           ch.bubbleType = null;
