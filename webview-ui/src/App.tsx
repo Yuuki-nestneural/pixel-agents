@@ -159,17 +159,26 @@ function App() {
   const [isDebugMode, setIsDebugMode] = useState(false);
   const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
   const [chatPanelVisible, setChatPanelVisible] = useState(false);
+  const [hasPendingQuestion, setHasPendingQuestion] = useState(false);
 
   // Auto-open whiteboard panel when a question arrives
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.data?.type === 'askUserQuestion') {
         setChatPanelVisible(true);
+        setHasPendingQuestion(true);
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, []);
+
+  // Clear pending indicator when chat panel is opened
+  useEffect(() => {
+    if (chatPanelVisible) {
+      setHasPendingQuestion(false);
+    }
+  }, [chatPanelVisible]);
 
   const handleFurnitureClick = useCallback((type: string) => {
     if (type.startsWith('WHITEBOARD')) {
@@ -311,6 +320,9 @@ function App() {
         workspaceFolders={workspaceFolders}
         externalAssetDirectories={externalAssetDirectories}
         agentMode={agentMode}
+        hasPendingQuestion={hasPendingQuestion}
+        chatPanelVisible={chatPanelVisible}
+        onToggleChat={() => setChatPanelVisible((prev) => !prev)}
       />
 
       {editor.isEditMode && editor.isDirty && (

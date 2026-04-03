@@ -15,6 +15,9 @@ interface BottomToolbarProps {
   workspaceFolders: WorkspaceFolder[];
   externalAssetDirectories: string[];
   agentMode: string;
+  hasPendingQuestion: boolean;
+  chatPanelVisible: boolean;
+  onToggleChat: () => void;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -59,6 +62,9 @@ export function BottomToolbar({
   workspaceFolders,
   externalAssetDirectories,
   agentMode,
+  hasPendingQuestion,
+  chatPanelVisible,
+  onToggleChat,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -244,6 +250,37 @@ export function BottomToolbar({
           </div>
         )}
       </div>
+      <button
+        onClick={onToggleChat}
+        onMouseEnter={() => setHovered('chat')}
+        onMouseLeave={() => setHovered(null)}
+        style={{
+          ...(chatPanelVisible
+            ? btnActive
+            : {
+                ...btnBase,
+                background: hovered === 'chat' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
+              }),
+          position: 'relative',
+        }}
+        title="Chat"
+      >
+        Chat
+        {hasPendingQuestion && !chatPanelVisible && (
+          <span
+            className="pixel-agents-pulse"
+            style={{
+              position: 'absolute',
+              top: 2,
+              right: 2,
+              width: 8,
+              height: 8,
+              background: 'var(--pixel-danger-bg)',
+              border: '1px solid var(--pixel-bg)',
+            }}
+          />
+        )}
+      </button>
       <button
         onClick={onToggleEditMode}
         onMouseEnter={() => setHovered('edit')}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { playDoneSound } from '../notificationSound.js';
 import { vscode } from '../vscodeApi.js';
 
 /* ── Types ──────────────────────────────────────────────────── */
@@ -57,6 +58,8 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
         ]);
         setPendingQuestionId(msg.id);
         setTab('chat'); // auto-switch to chat tab
+        // Play notification sound for incoming question
+        playDoneSound();
       } else if (msg.type === 'chatLogEntry') {
         // Live chat log entry from the backend
         // Skip user_reply — already shown locally when user submits via the input
