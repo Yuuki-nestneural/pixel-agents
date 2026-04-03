@@ -12,6 +12,7 @@ interface Quest {
   priority: 'low' | 'medium' | 'high';
   status: 'open' | 'in-progress' | 'done';
   assignee?: string;
+  parentQuestId?: string;
 }
 
 interface ChatMessage {
@@ -33,6 +34,78 @@ interface ChatLogEntry {
 }
 
 type Tab = 'quests' | 'chat';
+
+/* ── Quest Card ─────────────────────────────────────────────── */
+
+function QuestCard({
+  q,
+  priorityColor,
+  statusIcon,
+  isSubquest,
+}: {
+  q: Quest;
+  priorityColor: Record<string, string>;
+  statusIcon: Record<string, string>;
+  isSubquest?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding: isSubquest ? '6px 8px' : '8px 10px',
+        marginBottom: '6px',
+        background: 'rgba(255, 255, 255, 0.04)',
+        border: '1px solid var(--pixel-border)',
+        borderLeft: `3px solid ${priorityColor[q.priority] ?? '#888'}`,
+        borderRadius: 0,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '4px',
+        }}
+      >
+        <span
+          style={{
+            fontWeight: 'bold',
+            color: 'rgba(255, 255, 255, 0.9)',
+            fontSize: isSubquest ? '20px' : '22px',
+          }}
+        >
+          {statusIcon[q.status] ?? '?'} {q.title}
+        </span>
+        <span
+          style={{
+            fontSize: '18px',
+            color: priorityColor[q.priority] ?? '#888',
+            textTransform: 'uppercase',
+          }}
+        >
+          {q.priority}
+        </span>
+      </div>
+      {q.description && (
+        <div
+          style={{
+            color: 'rgba(255, 255, 255, 0.6)',
+            fontSize: isSubquest ? '18px' : '20px',
+            marginBottom: '4px',
+          }}
+        >
+          {q.description}
+        </div>
+      )}
+      <div style={{ fontSize: '18px', color: 'rgba(255, 255, 255, 0.5)' }}>
+        {q.assignee && <span>{q.assignee}</span>}
+        <span style={{ marginLeft: q.assignee ? 8 : 0 }}>
+          {q.status === 'done' ? 'Done' : q.status === 'in-progress' ? 'In Progress' : 'Open'}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /* ── Component ──────────────────────────────────────────────── */
 
@@ -302,68 +375,31 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   No quests yet.
                 </div>
               )}
-              {quests.map((q) => (
-                <div
-                  key={q.id}
-                  style={{
-                    padding: '8px 10px',
-                    marginBottom: '6px',
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    border: '1px solid var(--pixel-border)',
-                    borderLeft: `3px solid ${priorityColor[q.priority] ?? '#888'}`,
-                    borderRadius: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontWeight: 'bold',
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        fontSize: '22px',
-                      }}
-                    >
-                      {statusIcon[q.status] ?? '?'} {q.title}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: '18px',
-                        color: priorityColor[q.priority] ?? '#888',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      {q.priority}
-                    </span>
-                  </div>
-                  {q.description && (
-                    <div
-                      style={{
-                        color: 'rgba(255, 255, 255, 0.6)',
-                        fontSize: '20px',
-                        marginBottom: '4px',
-                      }}
-                    >
-                      {q.description}
+              {quests
+                .filter((q) => !q.parentQuestId)
+                .map((q) => {
+                  const subquests = quests.filter((sq) => sq.parentQuestId === q.id);
+                  return (
+                    <div key={q.id}>
+                      <QuestCard q={q} priorityColor={priorityColor} statusIcon={statusIcon} />
+                      {subquests.length > 0 && (
+                        <div
+                          style={{ marginLeft: 16, borderLeft: '2px solid var(--pixel-border)' }}
+                        >
+                          {subquests.map((sq) => (
+                            <QuestCard
+                              key={sq.id}
+                              q={sq}
+                              priorityColor={priorityColor}
+                              statusIcon={statusIcon}
+                              isSubquest
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div style={{ fontSize: '18px', color: 'rgba(255, 255, 255, 0.5)' }}>
-                    {q.assignee && <span>{q.assignee}</span>}
-                    <span style={{ marginLeft: q.assignee ? 8 : 0 }}>
-                      {q.status === 'done'
-                        ? 'Done'
-                        : q.status === 'in-progress'
-                          ? 'In Progress'
-                          : 'Open'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
             </div>
           )}
 

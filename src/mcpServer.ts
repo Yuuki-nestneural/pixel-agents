@@ -31,6 +31,7 @@ export interface Quest {
   notes?: string[];
   createdAt: number;
   updatedAt?: number;
+  parentQuestId?: string;
 }
 
 /**
@@ -1008,6 +1009,10 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           .optional()
           .describe('Quest priority level (default: medium)'),
         assigned_to: z.string().optional().describe('Agent ID to assign this quest to'),
+        parent_quest_id: z
+          .string()
+          .optional()
+          .describe('Parent quest ID to create this as a subquest'),
       },
       async ({
         agent_id,
@@ -1015,13 +1020,27 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         description,
         priority,
         assigned_to,
+        parent_quest_id,
       }: {
         agent_id?: string;
         title: string;
         description?: string;
         priority?: 'low' | 'medium' | 'high' | 'critical';
         assigned_to?: string;
+        parent_quest_id?: string;
       }) => {
+        // Validate parent quest exists if specified
+        if (parent_quest_id && !this.quests.has(parent_quest_id)) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Parent quest "${parent_quest_id}" not found.`,
+              },
+            ],
+          };
+        }
+
         const questId = `quest-${this.nextQuestId++}`;
         const creatorName = this.resolveAgentName(agent_id);
         const assigneeName = assigned_to ? this.resolveAgentName(assigned_to) : undefined;
@@ -1035,6 +1054,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           createdBy: creatorName,
           assignedTo: assigneeName,
           createdAt: Date.now(),
+          parentQuestId: parent_quest_id,
         };
 
         this.quests.set(questId, quest);

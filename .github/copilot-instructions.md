@@ -114,6 +114,7 @@ Add a new quest/task to the quest board (displayed on the office whiteboard).
 - `description` (string, optional): Detailed description
 - `priority` (enum, optional): `low`, `medium`, `high`, or `critical` (default: medium)
 - `assigned_to` (string, optional): Agent ID to assign the quest to
+- `parent_quest_id` (string, optional): Parent quest ID to create this as a subquest
 
 ### `update_quest`
 Update the status of an existing quest.
