@@ -59,6 +59,8 @@ export interface ExtensionMessageState {
   workspaceFolders: WorkspaceFolder[];
   externalAssetDirectories: string[];
   agentMode: string;
+  autoPilotEnabled: boolean;
+  autoPilotMessages: string[];
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -91,6 +93,12 @@ export function useExtensionMessages(
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [agentMode, setAgentMode] = useState<string>('both');
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState(false);
+  const [autoPilotMessages, setAutoPilotMessages] = useState<string[]>([
+    'continue',
+    'yes',
+    'proceed',
+  ]);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -394,6 +402,12 @@ export function useExtensionMessages(
         if (typeof msg.agentMode === 'string') {
           setAgentMode(msg.agentMode);
         }
+        if (typeof msg.autoPilotEnabled === 'boolean') {
+          setAutoPilotEnabled(msg.autoPilotEnabled);
+        }
+        if (Array.isArray(msg.autoPilotMessages)) {
+          setAutoPilotMessages(msg.autoPilotMessages as string[]);
+        }
       } else if (msg.type === 'externalAssetDirectoriesUpdated') {
         if (Array.isArray(msg.dirs)) {
           setExternalAssetDirectories(msg.dirs as string[]);
@@ -429,5 +443,7 @@ export function useExtensionMessages(
     workspaceFolders,
     externalAssetDirectories,
     agentMode,
+    autoPilotEnabled,
+    autoPilotMessages,
   };
 }

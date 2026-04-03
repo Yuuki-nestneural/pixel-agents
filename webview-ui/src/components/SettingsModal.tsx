@@ -11,6 +11,8 @@ interface SettingsModalProps {
   alwaysShowOverlay: boolean;
   onToggleAlwaysShowOverlay: () => void;
   externalAssetDirectories: string[];
+  autoPilotEnabled: boolean;
+  autoPilotMessages: string[];
 }
 
 const menuItemBase: React.CSSProperties = {
@@ -36,9 +38,13 @@ export function SettingsModal({
   alwaysShowOverlay,
   onToggleAlwaysShowOverlay,
   externalAssetDirectories,
+  autoPilotEnabled,
+  autoPilotMessages,
 }: SettingsModalProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
+  const [apLocal, setApLocal] = useState(autoPilotEnabled);
+  const [apMessagesLocal, setApMessagesLocal] = useState(autoPilotMessages.join('\n'));
 
   if (!isOpen) return null;
 
@@ -239,6 +245,77 @@ export function SettingsModal({
             {soundLocal ? 'X' : ''}
           </span>
         </button>
+        <button
+          onClick={() => {
+            const newVal = !apLocal;
+            setApLocal(newVal);
+            vscode.postMessage({ type: 'setAutoPilotEnabled', enabled: newVal });
+          }}
+          onMouseEnter={() => setHovered('autopilot')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...menuItemBase,
+            background: hovered === 'autopilot' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+          }}
+        >
+          <span>Autopilot Mode</span>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              border: '2px solid rgba(255, 255, 255, 0.5)',
+              borderRadius: 0,
+              background: apLocal ? 'rgba(90, 140, 255, 0.8)' : 'transparent',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '12px',
+              lineHeight: 1,
+              color: '#fff',
+            }}
+          >
+            {apLocal ? 'X' : ''}
+          </span>
+        </button>
+        {apLocal && (
+          <div style={{ padding: '4px 10px' }}>
+            <label
+              style={{
+                fontSize: '18px',
+                color: 'rgba(255, 255, 255, 0.5)',
+                display: 'block',
+                marginBottom: 4,
+              }}
+            >
+              Auto responses (one per line):
+            </label>
+            <textarea
+              value={apMessagesLocal}
+              onChange={(e) => setApMessagesLocal(e.target.value)}
+              onBlur={() => {
+                const lines = apMessagesLocal
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter((s) => s);
+                vscode.postMessage({ type: 'setAutoPilotMessages', messages: lines });
+              }}
+              style={{
+                width: '100%',
+                height: 80,
+                background: 'rgba(30, 30, 46, 0.8)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: 0,
+                color: 'rgba(255, 255, 255, 0.8)',
+                padding: '4px 6px',
+                fontFamily: 'inherit',
+                fontSize: '16px',
+                resize: 'none',
+              }}
+              placeholder={'continue\nyes\nproceed'}
+            />
+          </div>
+        )}
         <button
           onClick={onToggleAlwaysShowOverlay}
           onMouseEnter={() => setHovered('overlay')}

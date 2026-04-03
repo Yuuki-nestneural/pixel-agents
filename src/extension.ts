@@ -7,6 +7,9 @@ import {
   COMMAND_START_MCP_SERVER,
   COMMAND_STOP_MCP_SERVER,
   COPILOT_TERMINAL_PREFIX_DEFAULT,
+  GLOBAL_KEY_AUTOPILOT_ENABLED,
+  GLOBAL_KEY_AUTOPILOT_INDEX,
+  GLOBAL_KEY_AUTOPILOT_MESSAGES,
   MCP_DEFAULT_PORT,
   VIEW_ID,
 } from './constants.js';
@@ -56,6 +59,14 @@ export function activate(context: vscode.ExtensionContext) {
     if (mcpServerInstance?.submitAskUserResponse(response)) {
       outputChannel?.appendLine('[AskUser] Response submitted via webview → MCP');
     }
+  };
+
+  // Wire autopilot config changes → MCP server
+  provider.onAutoPilotChanged = (enabled: boolean, messages: string[], index: number) => {
+    mcpServerInstance?.setAutoPilotConfig(enabled, messages, index);
+    outputChannel?.appendLine(
+      `[AutoPilot] ${enabled ? 'Enabled' : 'Disabled'}, ${messages.length} messages`,
+    );
   };
 
   // Send persisted quests and chat entries when webview loads
@@ -178,6 +189,19 @@ async function startMcpServer(): Promise<void> {
       mcpServerInstance.restoreQuests(savedQuests);
       outputChannel?.appendLine(`[MCP] Restored ${savedQuests.length} persisted quests`);
     }
+
+    // Initialize autopilot config from persisted settings
+    const apEnabled = extensionContext.globalState.get<boolean>(
+      GLOBAL_KEY_AUTOPILOT_ENABLED,
+      false,
+    );
+    const apMessages = extensionContext.globalState.get<string[]>(GLOBAL_KEY_AUTOPILOT_MESSAGES, [
+      'continue',
+      'yes',
+      'proceed',
+    ]);
+    const apIndex = extensionContext.globalState.get<number>(GLOBAL_KEY_AUTOPILOT_INDEX, 0);
+    mcpServerInstance.setAutoPilotConfig(apEnabled, apMessages, apIndex);
   }
 
   // Forward chat log entries to webview

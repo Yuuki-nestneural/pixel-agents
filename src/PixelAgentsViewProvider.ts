@@ -27,6 +27,9 @@ import {
 } from './assetLoader.js';
 import { readConfig, writeConfig } from './configPersistence.js';
 import {
+  GLOBAL_KEY_AUTOPILOT_ENABLED,
+  GLOBAL_KEY_AUTOPILOT_INDEX,
+  GLOBAL_KEY_AUTOPILOT_MESSAGES,
   GLOBAL_KEY_SOUND_ENABLED,
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
@@ -68,6 +71,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // Callback for ask_user responses from the webview chat
   onAskUserResponse?: (response: string) => void;
+
+  // Callback when autopilot settings change
+  onAutoPilotChanged?: (enabled: boolean, messages: string[], index: number) => void;
 
   // Callback fired after webviewReady is handled (for sending persisted data)
   onWebviewReady?: () => void;
@@ -170,6 +176,20 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         writeLayoutToFile(message.layout as Record<string, unknown>);
       } else if (message.type === 'setSoundEnabled') {
         this.context.globalState.update(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
+      } else if (message.type === 'setAutoPilotEnabled') {
+        this.context.globalState.update(GLOBAL_KEY_AUTOPILOT_ENABLED, message.enabled);
+        const messages = this.context.globalState.get<string[]>(GLOBAL_KEY_AUTOPILOT_MESSAGES, [
+          'continue',
+          'yes',
+          'proceed',
+        ]);
+        const index = this.context.globalState.get<number>(GLOBAL_KEY_AUTOPILOT_INDEX, 0);
+        this.onAutoPilotChanged?.(message.enabled as boolean, messages, index);
+      } else if (message.type === 'setAutoPilotMessages') {
+        this.context.globalState.update(GLOBAL_KEY_AUTOPILOT_MESSAGES, message.messages);
+        const enabled = this.context.globalState.get<boolean>(GLOBAL_KEY_AUTOPILOT_ENABLED, false);
+        const index = this.context.globalState.get<number>(GLOBAL_KEY_AUTOPILOT_INDEX, 0);
+        this.onAutoPilotChanged?.(enabled, message.messages as string[], index);
       } else if (message.type === 'askUserResponse') {
         // User submitted a response to an ask_user question from the webview chat
         if (message.response && typeof message.response === 'string') {
@@ -203,6 +223,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           soundEnabled,
           externalAssetDirectories: config.externalAssetDirectories,
           agentMode,
+          autoPilotEnabled: this.context.globalState.get<boolean>(
+            GLOBAL_KEY_AUTOPILOT_ENABLED,
+            false,
+          ),
+          autoPilotMessages: this.context.globalState.get<string[]>(GLOBAL_KEY_AUTOPILOT_MESSAGES, [
+            'continue',
+            'yes',
+            'proceed',
+          ]),
         });
 
         // Send workspace folders to webview (only when multi-root)

@@ -19,6 +19,9 @@ export const LAYOUT_REVISION_KEY = 'layoutRevision';
 
 // ── Settings Persistence ────────────────────────────────────
 export const GLOBAL_KEY_SOUND_ENABLED = 'pixel-agents.soundEnabled';
+export const GLOBAL_KEY_AUTOPILOT_ENABLED = 'pixel-agents.autoPilotEnabled';
+export const GLOBAL_KEY_AUTOPILOT_MESSAGES = 'pixel-agents.autoPilotMessages';
+export const GLOBAL_KEY_AUTOPILOT_INDEX = 'pixel-agents.autoPilotMessageIndex';
 
 // ── VS Code Identifiers ─────────────────────────────────────
 export const VIEW_ID = 'pixel-agents.panelView';

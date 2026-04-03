@@ -76,6 +76,11 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   // Queue for user messages that arrive when no ask_user is pending
   private userMessageQueue: string[] = [];
 
+  // Autopilot mode: auto-respond to ask_user with cycling messages
+  private autoPilotEnabled = false;
+  private autoPilotMessages: string[] = [];
+  private autoPilotIndex = 0;
+
   // Callback when a new agent registers
   onAgentRegistered?: (agentId: string, agentName: string) => void;
   // Callback when an agent unregisters
@@ -165,6 +170,13 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       `[MCP] User message queued (${this.userMessageQueue.length} in queue)`,
     );
     return true;
+  }
+
+  /** Configure autopilot mode */
+  setAutoPilotConfig(enabled: boolean, messages: string[], index: number): void {
+    this.autoPilotEnabled = enabled;
+    this.autoPilotMessages = messages;
+    this.autoPilotIndex = index;
   }
 
   /**
@@ -352,6 +364,32 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
 
         // Forward to webview (for whiteboard chat panel)
         this.onAskUserForWebview?.(question);
+
+        // Autopilot: auto-respond with cycling messages
+        if (this.autoPilotEnabled && this.autoPilotMessages.length > 0) {
+          const autoResponse =
+            this.autoPilotMessages[this.autoPilotIndex % this.autoPilotMessages.length];
+          this.autoPilotIndex++;
+
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: `[autopilot] ${autoResponse}`,
+          });
+
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  response: autoResponse,
+                  queued: false,
+                  attachmentCount: 0,
+                }),
+              },
+            ],
+          };
+        }
 
         // Check if there are queued messages from the user
         if (this.userMessageQueue.length > 0) {

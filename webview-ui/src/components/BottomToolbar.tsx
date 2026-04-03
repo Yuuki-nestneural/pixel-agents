@@ -18,6 +18,8 @@ interface BottomToolbarProps {
   hasPendingQuestion: boolean;
   chatPanelVisible: boolean;
   onToggleChat: () => void;
+  autoPilotEnabled: boolean;
+  autoPilotMessages: string[];
 }
 
 const panelStyle: React.CSSProperties = {
@@ -65,6 +67,8 @@ export function BottomToolbar({
   hasPendingQuestion,
   chatPanelVisible,
   onToggleChat,
+  autoPilotEnabled,
+  autoPilotMessages,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -323,6 +327,8 @@ export function BottomToolbar({
           alwaysShowOverlay={alwaysShowOverlay}
           onToggleAlwaysShowOverlay={onToggleAlwaysShowOverlay}
           externalAssetDirectories={externalAssetDirectories}
+          autoPilotEnabled={autoPilotEnabled}
+          autoPilotMessages={autoPilotMessages}
         />
       </div>
     </div>

@@ -150,6 +150,8 @@ function App() {
     workspaceFolders,
     externalAssetDirectories,
     agentMode,
+    autoPilotEnabled,
+    autoPilotMessages,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -323,6 +325,8 @@ function App() {
         hasPendingQuestion={hasPendingQuestion}
         chatPanelVisible={chatPanelVisible}
         onToggleChat={() => setChatPanelVisible((prev) => !prev)}
+        autoPilotEnabled={autoPilotEnabled}
+        autoPilotMessages={autoPilotMessages}
       />
 
       {editor.isEditMode && editor.isDirty && (
