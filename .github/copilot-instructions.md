@@ -33,11 +33,11 @@ Remove your agent from the office when your session ends.
 - `agent_id` (string, required): Your agent_id from register_agent
 
 ### `ask_user`
-Send a question to the user via Telegram and wait for their reply. **Use this for ALL questions — never ask in chat.** Supports sending an image alongside the question, and receiving image replies. If the user replies within ~15 seconds, the reply is returned directly. Otherwise, a `request_id` is returned — use `get_user_reply` to poll for the response.
+Send a question to the user via Telegram and/or VS Code webview and wait briefly for a reply. **Use this for ALL questions — never ask in chat.** Supports sending an image alongside the question, and receiving image replies. If the user replies within ~15 seconds, the reply is returned directly. Otherwise, a `request_id` is returned — use `get_user_reply` to poll for the response.
 
 **Parameters:**
-- `message` (string, required): The question to send
-- `timeout_seconds` (number, optional): Max seconds to wait for reply (0 or omit for no limit)
+- `question` (string, required): The question to send
+- `timeout_seconds` (number, optional): Max seconds to wait for reply (default: 15, 0 = return immediately with request_id)
 - `image_url` (string, optional): HTTP URL of an image to send alongside the question
 
 **Returns:** Either the user's reply directly, or a `request_id` string to use with `get_user_reply`.

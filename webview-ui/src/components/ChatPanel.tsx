@@ -56,7 +56,7 @@ export function ChatPanel({ visible, onClose }: { visible: boolean; onClose: () 
 
   const handleSubmit = useCallback(() => {
     const text = inputValue.trim();
-    if (!text || !pendingQuestionId) return;
+    if (!text) return;
 
     // Add user response to chat
     setMessages((prev) => [
@@ -69,11 +69,13 @@ export function ChatPanel({ visible, onClose }: { visible: boolean; onClose: () 
       },
     ]);
 
-    // Send response back to extension
+    // Send response back to extension (queued if no question pending)
     vscode.postMessage({ type: 'askUserResponse', response: text });
 
     setInputValue('');
-    setPendingQuestionId(null);
+    if (pendingQuestionId) {
+      setPendingQuestionId(null);
+    }
   }, [inputValue, pendingQuestionId]);
 
   const handleKeyDown = useCallback(
@@ -201,10 +203,7 @@ export function ChatPanel({ visible, onClose }: { visible: boolean; onClose: () 
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={
-            pendingQuestionId ? 'Type your response...' : 'Waiting for agent question...'
-          }
-          disabled={!pendingQuestionId}
+          placeholder={pendingQuestionId ? 'Type your response...' : 'Type a message to queue...'}
           rows={2}
           style={{
             flex: 1,
@@ -221,16 +220,16 @@ export function ChatPanel({ visible, onClose }: { visible: boolean; onClose: () 
         />
         <button
           onClick={handleSubmit}
-          disabled={!pendingQuestionId || !inputValue.trim()}
+          disabled={!inputValue.trim()}
           style={{
-            background: pendingQuestionId
+            background: inputValue.trim()
               ? 'var(--vscode-button-background, #007acc)'
               : 'var(--vscode-button-secondaryBackground, #555)',
             color: 'var(--vscode-button-foreground, #fff)',
             border: 'none',
             borderRadius: '2px',
             padding: '4px 12px',
-            cursor: pendingQuestionId ? 'pointer' : 'default',
+            cursor: inputValue.trim() ? 'pointer' : 'default',
             fontSize: '12px',
             alignSelf: 'flex-end',
           }}

@@ -18,6 +18,7 @@ interface ChatMessage {
   type: 'question' | 'response';
   text: string;
   timestamp: number;
+  imageDataUrl?: string;
 }
 
 interface ChatLogEntry {
@@ -26,6 +27,8 @@ interface ChatLogEntry {
   agentName: string;
   type: string;
   message: string;
+  imageBase64?: string;
+  imageMimeType?: string;
 }
 
 type Tab = 'quests' | 'chat';
@@ -57,8 +60,13 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
       } else if (msg.type === 'chatLogEntry') {
         // Live chat log entry from the backend
         // Skip user_reply — already shown locally when user submits via the input
+        // Skip ask_user — already shown via the askUserQuestion message
         const e = msg.entry;
-        if (!e || e.type === 'user_reply') return;
+        if (!e || e.type === 'user_reply' || e.type === 'ask_user') return;
+        const imageDataUrl =
+          e.imageBase64 && e.imageMimeType
+            ? `data:${e.imageMimeType};base64,${e.imageBase64}`
+            : undefined;
         setChatMessages((prev) => [
           ...prev,
           {
@@ -66,6 +74,7 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
             type: 'question' as const,
             text: `[${e.agentName}] ${e.message}`,
             timestamp: e.timestamp,
+            imageDataUrl,
           },
         ]);
       } else if (msg.type === 'chatLogBulk') {
@@ -76,6 +85,10 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
           type: e.type === 'user_reply' ? 'response' : 'question',
           text: `[${e.agentName}] ${e.message}`,
           timestamp: e.timestamp,
+          imageDataUrl:
+            e.imageBase64 && e.imageMimeType
+              ? `data:${e.imageMimeType};base64,${e.imageBase64}`
+              : undefined,
         }));
         setChatMessages(restored);
       }
@@ -98,14 +111,18 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
 
   const handleSendChat = useCallback(() => {
     const text = inputValue.trim();
-    if (!text || !pendingQuestionId) return;
+    if (!text) return;
     setChatMessages((prev) => [
       ...prev,
       { id: `resp-${Date.now()}`, type: 'response', text, timestamp: Date.now() },
     ]);
     vscode.postMessage({ type: 'askUserResponse', response: text });
     setInputValue('');
-    setPendingQuestionId(null);
+    // Only clear pending question if there was one (direct reply).
+    // If no question was pending, this is a queued message for the next ask_user.
+    if (pendingQuestionId) {
+      setPendingQuestionId(null);
+    }
   }, [inputValue, pendingQuestionId]);
 
   const handleKeyDown = useCallback(
@@ -368,6 +385,20 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                       {msg.type === 'question' ? 'Agent' : 'You'}
                     </div>
                     {msg.text}
+                    {msg.imageDataUrl && (
+                      <img
+                        src={msg.imageDataUrl}
+                        alt="Attached image"
+                        style={{
+                          display: 'block',
+                          maxWidth: '100%',
+                          maxHeight: 200,
+                          marginTop: 6,
+                          borderRadius: 0,
+                          border: '1px solid var(--pixel-border)',
+                        }}
+                      />
+                    )}
                   </div>
                 ))}
                 <div ref={chatEndRef} />
@@ -386,8 +417,9 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={pendingQuestionId ? 'Type your response...' : 'Waiting for agent...'}
-                  disabled={!pendingQuestionId}
+                  placeholder={
+                    pendingQuestionId ? 'Type your response...' : 'Type a message to queue...'
+                  }
                   rows={2}
                   style={{
                     flex: 1,
@@ -404,16 +436,16 @@ export function WhiteboardPanel({ visible, onClose }: { visible: boolean; onClos
                 />
                 <button
                   onClick={handleSendChat}
-                  disabled={!pendingQuestionId || !inputValue.trim()}
+                  disabled={!inputValue.trim()}
                   style={{
-                    background: pendingQuestionId
+                    background: inputValue.trim()
                       ? 'var(--pixel-accent)'
                       : 'rgba(255, 255, 255, 0.1)',
                     color: '#fff',
                     border: '2px solid var(--pixel-accent)',
                     borderRadius: 0,
                     padding: '6px 16px',
-                    cursor: pendingQuestionId ? 'pointer' : 'default',
+                    cursor: inputValue.trim() ? 'pointer' : 'default',
                     fontSize: '22px',
                     alignSelf: 'flex-end',
                     boxShadow: 'var(--pixel-shadow)',

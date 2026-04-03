@@ -52,6 +52,16 @@ export class TelegramBot {
   private pollingActive = false;
   private pollingAbort: AbortController | null = null;
 
+  // Background polling for unsolicited messages (queuing)
+  private bgPollingActive = false;
+  private bgPollingAbort: AbortController | null = null;
+
+  /**
+   * Callback for messages that arrive when no ask_user is pending.
+   * The MCP server uses this to feed the user message queue.
+   */
+  onUnsolicitedMessage?: (reply: TelegramReply) => void;
+
   constructor(botToken: string, chatId: string) {
     this.botToken = botToken;
     this.chatId = chatId;
@@ -423,11 +433,13 @@ export class TelegramBot {
           }
 
           if (reply) {
-            // Resolve the oldest pending request
-            const [oldestId, oldestEntry] = [...this.pendingReplies.entries()][0];
+            // Resolve the oldest pending request, or forward as unsolicited
+            const [oldestId, oldestEntry] = [...this.pendingReplies.entries()][0] ?? [];
             if (oldestEntry) {
               oldestEntry.resolve(reply);
               this.pendingReplies.delete(oldestId);
+            } else if (this.onUnsolicitedMessage) {
+              this.onUnsolicitedMessage(reply);
             }
           }
         }
@@ -439,8 +451,106 @@ export class TelegramBot {
     this.pollingActive = false;
   }
 
+  /**
+   * Cancel a pending request (e.g., when another channel responded first).
+   * Removes the request from pending maps so polling can stop if no others remain.
+   */
+  cancelPendingRequest(requestId: string): void {
+    const entry = this.pendingReplies.get(requestId);
+    if (entry) {
+      entry.reject(new Error('Request cancelled — answered via another channel'));
+      this.pendingReplies.delete(requestId);
+      this.replyPromises.delete(requestId);
+    }
+  }
+
+  /**
+   * Start continuous background polling for unsolicited Telegram messages.
+   * Messages that arrive when no ask_user is pending will be forwarded
+   * to `onUnsolicitedMessage` for queuing.
+   */
+  startBackgroundPolling(): void {
+    if (this.bgPollingActive) return;
+    this.bgPollingActive = true;
+    this.bgPollingAbort = new AbortController();
+    this.bgPollLoop(this.bgPollingAbort.signal).catch(() => {});
+  }
+
+  /**
+   * Stop background polling.
+   */
+  stopBackgroundPolling(): void {
+    this.bgPollingAbort?.abort();
+    this.bgPollingActive = false;
+  }
+
+  /**
+   * Background polling loop: runs continuously and dispatches messages.
+   * When pending requests exist, the regular pollLoop handles replies.
+   * When no pending requests exist, messages go to onUnsolicitedMessage.
+   */
+  private async bgPollLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        // Skip if the regular poll loop is active (it handles messages)
+        if (this.pollingActive) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
+        const url = `${this.apiBase}/getUpdates`;
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            offset: this.lastUpdateId + 1,
+            timeout: 30,
+            allowed_updates: ['message'],
+          }),
+          signal,
+        });
+
+        if (!resp.ok) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
+        const data = (await resp.json()) as { result: TelegramUpdate[] };
+        for (const update of data.result) {
+          this.lastUpdateId = update.update_id;
+          const msg = update.message;
+          if (!msg || msg.chat.id.toString() !== this.chatId) continue;
+
+          let reply: TelegramReply | null = null;
+
+          if (msg.text) {
+            reply = { text: msg.text };
+          } else if (msg.photo && msg.photo.length > 0) {
+            const largestPhoto = msg.photo[msg.photo.length - 1];
+            try {
+              const filePath = await this.getFile(largestPhoto.file_id);
+              const downloaded = await this.downloadFile(filePath);
+              reply = { text: msg.caption || undefined, image: downloaded };
+            } catch {
+              reply = { text: msg.caption || '[Photo received but download failed]' };
+            }
+          }
+
+          if (reply && this.onUnsolicitedMessage) {
+            this.onUnsolicitedMessage(reply);
+          }
+        }
+      } catch (e) {
+        if (signal.aborted) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+    this.bgPollingActive = false;
+  }
+
   dispose(): void {
     this.pollingAbort?.abort();
+    this.bgPollingAbort?.abort();
     // Reject all pending requests
     for (const [id, entry] of this.pendingReplies) {
       entry.reject(new Error('TelegramBot disposed'));

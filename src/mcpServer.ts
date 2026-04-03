@@ -67,7 +67,11 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
   private pendingAskUser: {
     resolve: (response: string) => void;
     requestId: string;
+    resolved: boolean;
   } | null = null;
+
+  // Resolved replies waiting to be picked up by get_user_reply
+  private resolvedReplies = new Map<string, string>();
 
   // Queue for user messages that arrive when no ask_user is pending
   private userMessageQueue: string[] = [];
@@ -138,9 +142,21 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
    * If no question is pending, queues the message for the next ask_user call.
    */
   submitAskUserResponse(response: string): boolean {
-    if (this.pendingAskUser) {
+    if (this.pendingAskUser && !this.pendingAskUser.resolved) {
+      const { requestId } = this.pendingAskUser;
+      this.pendingAskUser.resolved = true;
       this.pendingAskUser.resolve(response);
+
+      // Also store in resolved replies in case the Promise was already abandoned
+      this.resolvedReplies.set(requestId, response);
+
       this.pendingAskUser = null;
+
+      // Cancel any Telegram polling for this request
+      if (this.telegramBot && requestId.startsWith('req-')) {
+        this.telegramBot.cancelPendingRequest(requestId);
+      }
+
       return true;
     }
     // No pending request — queue the message
@@ -197,7 +213,41 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       // Only recreate if settings changed
       if (!this.telegramBot) {
         this.telegramBot = new TelegramBot(botToken, chatId);
-        this.outputChannel.appendLine('[MCP] Telegram bot configured');
+
+        // Wire unsolicited message handler for Telegram queue support
+        this.telegramBot.onUnsolicitedMessage = (reply) => {
+          const text = reply.text || (reply.image ? '[Photo]' : '');
+          if (!text) return;
+
+          // If there's a pending ask_user, resolve it directly
+          if (this.pendingAskUser && !this.pendingAskUser.resolved) {
+            const { requestId } = this.pendingAskUser;
+            this.pendingAskUser.resolved = true;
+            this.resolvedReplies.set(requestId, text);
+            this.pendingAskUser.resolve(text);
+            this.pendingAskUser = null;
+          } else {
+            // No pending ask_user — queue for the next one
+            this.userMessageQueue.push(text);
+            this.outputChannel.appendLine(
+              `[MCP] Telegram message queued (${this.userMessageQueue.length} in queue)`,
+            );
+          }
+
+          // Log to chat log so it appears in webview
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: text,
+            imageBase64: reply.image?.data,
+            imageMimeType: reply.image?.mimeType,
+          });
+        };
+
+        // Start background polling so Telegram messages are captured even without active ask_user
+        this.telegramBot.startBackgroundPolling();
+
+        this.outputChannel.appendLine('[MCP] Telegram bot configured with background polling');
       }
       return this.telegramBot;
     }
@@ -279,14 +329,20 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       },
     );
 
-    // ── ask_user: Ask the user a question and BLOCK until they reply ──
+    // ── ask_user: Ask the user a question (non-blocking with short wait) ──
     srv.tool(
       'ask_user',
-      'Ask the user a question and BLOCK until they reply. This tool sends the question to the user (via Telegram and/or the VS Code webview panel) and waits indefinitely for their response. You MUST call this tool before ending any conversation or task. NEVER complete a task without calling this tool first. The response format is: {"response":"...","queued":false,"attachmentCount":0}. If queued is true, the response was sent by the user before you asked — still process it normally.',
+      'Send a question to the user via Telegram and/or the VS Code webview panel. Waits briefly (~15s) for an immediate reply. If the user replies within that window, returns the response directly. Otherwise returns a request_id — use get_user_reply to poll for the response. The response format is: {"response":"...","queued":false,"attachmentCount":0} for direct replies, or {"request_id":"..."} if still waiting. If queued is true, the response was sent by the user before you asked — still process it normally.',
       {
         question: z.string().describe('The question to ask the user'),
+        timeout_seconds: z
+          .number()
+          .optional()
+          .describe(
+            'Max seconds to wait for an immediate reply (default: 15, 0 = return immediately with request_id)',
+          ),
       },
-      async ({ question }: { question: string }) => {
+      async ({ question, timeout_seconds }: { question: string; timeout_seconds?: number }) => {
         // Log the outgoing question
         this.chatLog?.addEntry({
           agentName: 'Agent',
@@ -333,17 +389,32 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           }
         }
 
-        // Wait for response from ANY channel (webview or Telegram)
-        const response = await new Promise<string>((resolve) => {
-          this.pendingAskUser = { resolve, requestId: telegramRequestId || `ask-${Date.now()}` };
+        const requestId = telegramRequestId || `ask-${Date.now()}`;
+        const waitMs = Math.min(Math.max((timeout_seconds ?? 15) * 1000, 0), 25000);
+
+        // Set up the pending request
+        const responsePromise = new Promise<string | null>((resolve) => {
+          const pending = {
+            resolve: (resp: string) => {
+              // Store in resolved replies map for get_user_reply polling
+              this.resolvedReplies.set(requestId, resp);
+              resolve(resp);
+            },
+            requestId,
+            resolved: false,
+          };
+          this.pendingAskUser = pending;
 
           // Also poll Telegram in the background if available
           if (bot && telegramRequestId) {
             bot
               .getReply(telegramRequestId, 1_800_000)
               .then((reply) => {
-                if (reply?.text && this.pendingAskUser?.requestId === telegramRequestId) {
+                if (pending.resolved) return;
+                if (reply?.text && this.pendingAskUser === pending) {
+                  pending.resolved = true;
                   this.pendingAskUser = null;
+                  this.resolvedReplies.set(requestId, reply.text);
                   resolve(reply.text);
                 }
               })
@@ -351,21 +422,45 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           }
         });
 
-        // Log the response
-        this.chatLog?.addEntry({
-          agentName: 'User',
-          type: 'user_reply',
-          message: response,
-        });
+        // Wait briefly for an immediate reply, or return request_id
+        if (waitMs > 0) {
+          const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs));
+          const result = await Promise.race([responsePromise, timeout]);
+
+          if (result !== null) {
+            // Got an immediate reply — log and return it
+            this.chatLog?.addEntry({
+              agentName: 'User',
+              type: 'user_reply',
+              message: result,
+            });
+
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({
+                    response: result,
+                    queued: false,
+                    attachmentCount: 0,
+                  }),
+                },
+              ],
+            };
+          }
+        }
+
+        // No immediate reply — return request_id for polling
+        this.outputChannel.appendLine(
+          `[MCP] ask_user: No immediate reply, returning request_id "${requestId}"`,
+        );
 
         return {
           content: [
             {
               type: 'text' as const,
               text: JSON.stringify({
-                response,
-                queued: false,
-                attachmentCount: 0,
+                request_id: requestId,
               }),
             },
           ],
@@ -373,7 +468,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       },
     );
 
-    // ── get_user_reply: Poll for async Telegram reply ────────────
+    // ── get_user_reply: Poll for async reply ────────────
     srv.tool(
       'get_user_reply',
       'Check for a reply to a previously sent ask_user question. Returns the user reply if available, or indicates still waiting. Use this after ask_user returns a request_id without an immediate reply.',
@@ -385,23 +480,126 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           .describe('Seconds to wait for a reply before returning (default: 10, max: 25)'),
       },
       async ({ request_id, wait_seconds }: { request_id: string; wait_seconds?: number }) => {
-        const bot = this.refreshTelegramBot();
-        if (!bot) {
+        // First check if reply was already resolved (via webview or Telegram background)
+        const existingReply = this.resolvedReplies.get(request_id);
+        if (existingReply) {
+          this.resolvedReplies.delete(request_id);
+
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: existingReply,
+          });
+
           return {
             content: [
               {
                 type: 'text' as const,
-                text: 'Error: Telegram bot not configured.',
+                text: JSON.stringify({
+                  response: existingReply,
+                  queued: false,
+                  attachmentCount: 0,
+                }),
               },
             ],
-            isError: true,
           };
         }
 
-        const waitMs = Math.min((wait_seconds || 10) * 1000, 25000);
+        // Check the webview message queue (user may have typed during wait)
+        if (this.userMessageQueue.length > 0) {
+          const queued = this.userMessageQueue.join('\n');
+          this.userMessageQueue = [];
 
-        if (!bot.hasPendingRequest(request_id)) {
-          // Check if already resolved
+          // Clean up pending state
+          if (this.pendingAskUser?.requestId === request_id) {
+            this.pendingAskUser.resolved = true;
+            this.pendingAskUser = null;
+          }
+
+          this.chatLog?.addEntry({
+            agentName: 'User',
+            type: 'user_reply',
+            message: queued,
+          });
+
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  response: queued,
+                  queued: true,
+                  attachmentCount: 0,
+                }),
+              },
+            ],
+          };
+        }
+
+        // Wait briefly for a reply to arrive
+        const waitMs = Math.min((wait_seconds ?? 10) * 1000, 25000);
+
+        if (waitMs > 0) {
+          // Wait and check periodically
+          const deadline = Date.now() + waitMs;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 1000));
+
+            // Check resolved replies
+            const reply = this.resolvedReplies.get(request_id);
+            if (reply) {
+              this.resolvedReplies.delete(request_id);
+              this.chatLog?.addEntry({
+                agentName: 'User',
+                type: 'user_reply',
+                message: reply,
+              });
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({
+                      response: reply,
+                      queued: false,
+                      attachmentCount: 0,
+                    }),
+                  },
+                ],
+              };
+            }
+
+            // Check message queue
+            if (this.userMessageQueue.length > 0) {
+              const queuedMsg = this.userMessageQueue.join('\n');
+              this.userMessageQueue = [];
+              if (this.pendingAskUser?.requestId === request_id) {
+                this.pendingAskUser.resolved = true;
+                this.pendingAskUser = null;
+              }
+              this.chatLog?.addEntry({
+                agentName: 'User',
+                type: 'user_reply',
+                message: queuedMsg,
+              });
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: JSON.stringify({
+                      response: queuedMsg,
+                      queued: true,
+                      attachmentCount: 0,
+                    }),
+                  },
+                ],
+              };
+            }
+          }
+        }
+
+        // Also try Telegram directly if available
+        const bot = this.refreshTelegramBot();
+        if (bot && bot.hasPendingRequest(request_id)) {
           const reply = await bot.getReply(request_id, 0);
           if (reply) {
             this.chatLog?.addEntry({
@@ -428,41 +626,6 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             }
             return { content };
           }
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Request "${request_id}" not found or already completed.`,
-              },
-            ],
-          };
-        }
-
-        const reply = await bot.getReply(request_id, waitMs);
-        if (reply) {
-          this.chatLog?.addEntry({
-            agentName: 'User',
-            type: 'user_reply',
-            message: reply.text || '[Photo]',
-            imageBase64: reply.image?.data,
-            imageMimeType: reply.image?.mimeType,
-          });
-
-          const content: Array<
-            { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-          > = [];
-          if (reply.text) content.push({ type: 'text' as const, text: reply.text });
-          if (reply.image) {
-            content.push({
-              type: 'image' as const,
-              data: reply.image.data,
-              mimeType: reply.image.mimeType,
-            });
-          }
-          if (content.length === 0) {
-            content.push({ type: 'text' as const, text: '[Empty reply]' });
-          }
-          return { content };
         }
 
         return {
@@ -491,41 +654,28 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
       },
       async ({ message, image_url }: { message: string; image_url?: string }) => {
         const bot = this.refreshTelegramBot();
-        if (!bot) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Error: Telegram bot not configured.',
-              },
-            ],
-            isError: true,
-          };
-        }
-        try {
-          await bot.notifyUser(message, image_url);
 
-          // Log the notification
-          this.chatLog?.addEntry({
-            agentName: 'Agent',
-            type: 'notify_user',
-            message,
-          });
-
-          return {
-            content: [{ type: 'text' as const, text: 'Notification sent successfully.' }],
-          };
-        } catch (e) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: ${e instanceof Error ? e.message : String(e)}`,
-              },
-            ],
-            isError: true,
-          };
+        // Send via Telegram if configured
+        if (bot) {
+          try {
+            await bot.notifyUser(message, image_url);
+          } catch (e) {
+            this.outputChannel.appendLine(
+              `[MCP] Telegram notification failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
         }
+
+        // Always log to chat log (so webview shows it even without Telegram)
+        this.chatLog?.addEntry({
+          agentName: 'Agent',
+          type: 'notify_user',
+          message: image_url ? `${message}\n[Image: ${image_url}]` : message,
+        });
+
+        return {
+          content: [{ type: 'text' as const, text: 'Notification sent successfully.' }],
+        };
       },
     );
 
