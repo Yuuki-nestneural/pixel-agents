@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -12,6 +13,12 @@ import {
   sendExistingAgents,
   sendLayout,
 } from './agentManager.js';
+import type { RegisteredAgentEntry, RegistryWatcher } from './agentRegistryPersistence.js';
+import {
+  heartbeatRegistry,
+  removeRegistryEntry,
+  watchAgentRegistry,
+} from './agentRegistryPersistence.js';
 import type { LoadedAssets } from './assetLoader.js';
 import {
   loadCharacterSprites,
@@ -66,6 +73,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   // Cross-window layout sync
   layoutWatcher: LayoutWatcher | null = null;
 
+  // Multi-window agent registry
+  private readonly windowId = crypto.randomUUID();
+  private registryWatcher: RegistryWatcher | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
   // Track active Copilot agents (for re-sending on webview reload)
   private copilotAgents = new Map<number, { label: string; status: string }>();
 
@@ -91,6 +103,36 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private persistAgents = (): void => {
     persistAgents(this.agents, this.context);
   };
+
+  /** Build the current local agent entries for the registry */
+  private buildRegistryEntries(): RegisteredAgentEntry[] {
+    const seats =
+      this.context.workspaceState.get<
+        Record<number, { palette?: number; hueShift?: number; seatId?: string }>
+      >(WORKSPACE_KEY_AGENT_SEATS) ?? {};
+    const entries: RegisteredAgentEntry[] = [];
+    for (const [id, agent] of this.agents) {
+      const s = seats[id];
+      entries.push({
+        id,
+        palette: s?.palette ?? 0,
+        hueShift: s?.hueShift ?? 0,
+        seatId: s?.seatId ?? null,
+        isActive: agent.activeToolIds.size > 0,
+        currentTool:
+          agent.activeToolStatuses.size > 0
+            ? ([...agent.activeToolStatuses.values()].pop() ?? null)
+            : null,
+        folderName: agent.folderName,
+      });
+    }
+    return entries;
+  }
+
+  /** Update the agent registry with our current agents */
+  updateAgentRegistry(): void {
+    heartbeatRegistry(this.windowId, this.buildRegistryEntries());
+  }
 
   /**
    * Track a Copilot agent so it can be re-sent on webview reload.
@@ -383,6 +425,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
         sendExistingAgents(this.agents, this.context, this.webview);
         this.sendExistingCopilotAgents();
+        this.startAgentRegistry();
 
         // Notify extension.ts so it can send persisted quests/chat
         this.onWebviewReady?.();
@@ -487,6 +530,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             this.persistAgents,
           );
           webviewView.webview.postMessage({ type: 'agentClosed', id });
+          this.updateAgentRegistry();
         }
       }
     });
@@ -561,9 +605,38 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private startAgentRegistry(): void {
+    // Initial write
+    this.updateAgentRegistry();
+
+    // Heartbeat every poll interval to keep entry fresh
+    if (!this.heartbeatTimer) {
+      this.heartbeatTimer = setInterval(() => {
+        this.updateAgentRegistry();
+      }, 10000); // Heartbeat every 10 seconds
+    }
+
+    // Watch for changes from other windows
+    if (!this.registryWatcher) {
+      this.registryWatcher = watchAgentRegistry(this.windowId, (remoteAgents) => {
+        console.log(
+          `[Pixel Agents] Remote agents updated: ${remoteAgents.reduce((n, w) => n + w.agents.length, 0)} agents from ${remoteAgents.length} window(s)`,
+        );
+        this.webview?.postMessage({ type: 'remoteAgentsUpdated', remoteAgents });
+      });
+    }
+  }
+
   dispose() {
     this.layoutWatcher?.dispose();
     this.layoutWatcher = null;
+    this.registryWatcher?.dispose();
+    this.registryWatcher = null;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    removeRegistryEntry(this.windowId);
     for (const id of [...this.agents.keys()]) {
       removeAgent(
         id,

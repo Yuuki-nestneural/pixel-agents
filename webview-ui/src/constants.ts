@@ -26,6 +26,9 @@ export const SEAT_REST_MAX_SEC = 240.0;
 // ── Weather ──────────────────────────────────────────────────
 export const WEATHER_CYCLE_MIN_SEC = 300; // 5 min minimum between weather changes
 export const WEATHER_CYCLE_MAX_SEC = 600; // 10 min maximum between weather changes
+export const WEATHER_NIGHT_OVERLAY = 'rgba(10, 10, 50, 0.30)';
+export const WEATHER_RAIN_OVERLAY = 'rgba(40, 40, 70, 0.12)';
+export const WEATHER_CLEAR_OVERLAY = ''; // No overlay for clear weather
 
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;
@@ -123,3 +126,7 @@ export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32;
 export const PULSE_ANIMATION_DURATION_SEC = 1.5;
+
+// ── Agent Profile Card ──────────────────────────────────────
+export const AGENT_PROFILE_MAX_RECENT_TOOLS = 10;
+export const AGENT_PROFILE_UPTIME_INTERVAL_MS = 1000;

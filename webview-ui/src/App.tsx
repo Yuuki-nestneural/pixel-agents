@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { AgentProfileCard } from './components/AgentProfileCard.js';
+import { AgentTimeline } from './components/AgentTimeline.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { DebugView } from './components/DebugView.js';
 import { StatsBar } from './components/StatsBar.js';
@@ -143,6 +145,7 @@ function App() {
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentProfiles,
     subagentTools,
     subagentCharacters,
     layoutReady,
@@ -164,6 +167,8 @@ function App() {
   const [chatPanelVisible, setChatPanelVisible] = useState(false);
   const [hasPendingQuestion, setHasPendingQuestion] = useState(false);
   const [questStats, setQuestStats] = useState({ total: 0, completed: 0 });
+  const [profileAgentId, setProfileAgentId] = useState<number | null>(null);
+  const [timelineAgentId, setTimelineAgentId] = useState<number | null>(null);
 
   // Auto-open whiteboard panel when a question arrives, track quest stats
   useEffect(() => {
@@ -223,6 +228,11 @@ function App() {
 
   const handleCloseAgent = useCallback((id: number) => {
     vscode.postMessage({ type: 'closeAgent', id });
+    setProfileAgentId((prev) => (prev === id ? null : prev));
+  }, []);
+
+  const handleShowProfile = useCallback((id: number) => {
+    setProfileAgentId((prev) => (prev === id ? null : id));
   }, []);
 
   const handleClick = useCallback((agentId: number) => {
@@ -413,7 +423,38 @@ function App() {
           zoom={editor.zoom}
           panRef={editor.panRef}
           onCloseAgent={handleCloseAgent}
+          onShowProfile={handleShowProfile}
           alwaysShowOverlay={alwaysShowOverlay}
+        />
+      )}
+
+      {profileAgentId !== null &&
+        agentProfiles[profileAgentId] &&
+        (() => {
+          const ch = officeState.characters.get(profileAgentId);
+          return (
+            <AgentProfileCard
+              agentId={profileAgentId}
+              profile={agentProfiles[profileAgentId]}
+              tools={agentTools[profileAgentId]}
+              status={agentStatuses[profileAgentId]}
+              palette={ch?.palette ?? 0}
+              hueShift={ch?.hueShift ?? 0}
+              isActive={ch?.isActive ?? false}
+              folderName={ch?.folderName}
+              onClose={() => setProfileAgentId(null)}
+              onShowTimeline={() => {
+                setTimelineAgentId(profileAgentId);
+                setProfileAgentId(null);
+              }}
+            />
+          );
+        })()}
+
+      {timelineAgentId !== null && agentProfiles[timelineAgentId] && (
+        <AgentTimeline
+          profile={agentProfiles[timelineAgentId]}
+          onClose={() => setTimelineAgentId(null)}
         />
       )}
 

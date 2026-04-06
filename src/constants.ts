@@ -17,6 +17,11 @@ export const CONFIG_FILE_NAME = 'config.json';
 export const LAYOUT_FILE_POLL_INTERVAL_MS = 2000;
 export const LAYOUT_REVISION_KEY = 'layoutRevision';
 
+// ── Multi-Window Agent Registry ─────────────────────────────
+export const AGENT_REGISTRY_FILE_NAME = 'agents-registry.json';
+export const AGENT_REGISTRY_POLL_INTERVAL_MS = 2000;
+export const AGENT_REGISTRY_STALE_MS = 30000; // Remove entries older than 30s without heartbeat
+
 // ── Settings Persistence ────────────────────────────────────
 export const GLOBAL_KEY_SOUND_ENABLED = 'pixel-agents.soundEnabled';
 export const GLOBAL_KEY_AUTOPILOT_ENABLED = 'pixel-agents.autoPilotEnabled';

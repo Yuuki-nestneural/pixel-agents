@@ -39,6 +39,9 @@ import { matrixEffectSeeds } from './matrixEffect.js';
 export type WeatherState = 'clear' | 'rain' | 'night';
 const WEATHER_STATES: WeatherState[] = ['clear', 'rain', 'night'];
 
+/** Offset for remote agent IDs to avoid collision with local agents and sub-agents */
+const REMOTE_AGENT_ID_OFFSET = 10000;
+
 /** Maps weather state to the WINDOW_ sprite suffix */
 const WEATHER_WINDOW_MAP: Record<WeatherState, string> = {
   clear: 'WINDOW_CLEAR',
@@ -66,6 +69,8 @@ export class OfficeState {
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map();
   private nextSubagentId = -1;
+  /** IDs of remote agents from other windows */
+  remoteCharacterIds: Set<number> = new Set();
   /** Current weather state affecting window sprites */
   weatherState: WeatherState = 'clear';
   /** Countdown timer until next weather change */
@@ -213,7 +218,7 @@ export class OfficeState {
     // Count how many non-sub-agents use each base palette (0-5)
     const counts = new Array(PALETTE_COUNT).fill(0) as number[];
     for (const ch of this.characters.values()) {
-      if (ch.isSubagent) continue;
+      if (ch.isSubagent || ch.isRemote) continue;
       counts[ch.palette]++;
     }
     const minCount = Math.min(...counts);
@@ -539,6 +544,115 @@ export class OfficeState {
     return this.subagentIdMap.get(`${parentAgentId}:${parentToolId}`) ?? null;
   }
 
+  /**
+   * Synchronize remote agents from other VS Code windows.
+   * Adds new remote characters, updates existing ones, removes stale ones.
+   */
+  syncRemoteAgents(
+    remoteAgents: Array<{
+      windowId: string;
+      agents: Array<{
+        id: number;
+        palette: number;
+        hueShift: number;
+        seatId: string | null;
+        isActive: boolean;
+        currentTool: string | null;
+        folderName?: string;
+      }>;
+    }>,
+  ): void {
+    // Build a set of all incoming remote agent keys: "windowId:agentId"
+    const incomingIds = new Set<number>();
+    const incomingMap = new Map<
+      number,
+      {
+        palette: number;
+        hueShift: number;
+        isActive: boolean;
+        currentTool: string | null;
+        folderName?: string;
+      }
+    >();
+
+    // Assign stable local IDs: windowId+agentId → remoteCharacterId
+    for (const window of remoteAgents) {
+      for (const agent of window.agents) {
+        // Create a deterministic ID from window hash + agent id
+        let hash = 0;
+        for (let i = 0; i < window.windowId.length; i++) {
+          hash = ((hash << 5) - hash + window.windowId.charCodeAt(i)) | 0;
+        }
+        const remoteId = REMOTE_AGENT_ID_OFFSET + ((Math.abs(hash) * 100 + agent.id) % 90000);
+        incomingIds.add(remoteId);
+        incomingMap.set(remoteId, {
+          palette: agent.palette,
+          hueShift: agent.hueShift,
+          isActive: agent.isActive,
+          currentTool: agent.currentTool,
+          folderName: agent.folderName,
+        });
+      }
+    }
+
+    // Remove remote characters that are no longer present
+    for (const id of this.remoteCharacterIds) {
+      if (!incomingIds.has(id)) {
+        const ch = this.characters.get(id);
+        if (ch) {
+          if (ch.seatId) {
+            const seat = this.seats.get(ch.seatId);
+            if (seat) seat.assigned = false;
+          }
+          // Start despawn
+          ch.matrixEffect = 'despawn';
+          ch.matrixEffectTimer = 0;
+          ch.matrixEffectSeeds = matrixEffectSeeds();
+          ch.bubbleType = null;
+        }
+        this.remoteCharacterIds.delete(id);
+      }
+    }
+
+    // Add or update remote characters
+    for (const [remoteId, data] of incomingMap) {
+      const existing = this.characters.get(remoteId);
+      if (existing) {
+        // Update existing remote character's state
+        existing.isActive = data.isActive;
+        existing.currentTool = data.currentTool;
+      } else {
+        // Create new remote character
+        const seatId = this.findFreeSeat();
+        let ch: Character;
+        if (seatId) {
+          const seat = this.seats.get(seatId)!;
+          seat.assigned = true;
+          ch = createCharacter(remoteId, data.palette, seatId, seat, data.hueShift);
+        } else {
+          const spawn =
+            this.walkableTiles.length > 0
+              ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
+              : { col: 1, row: 1 };
+          ch = createCharacter(remoteId, data.palette, null, null, data.hueShift);
+          ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+          ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+          ch.tileCol = spawn.col;
+          ch.tileRow = spawn.row;
+        }
+        ch.isRemote = true;
+        ch.isActive = data.isActive;
+        ch.currentTool = data.currentTool;
+        if (data.folderName) ch.folderName = data.folderName;
+        ch.matrixEffect = 'spawn';
+        ch.matrixEffectTimer = 0;
+        ch.matrixEffectSeeds = matrixEffectSeeds();
+        this.characters.set(remoteId, ch);
+        this.remoteCharacterIds.add(remoteId);
+      }
+    }
+  }
+
   setAgentActive(id: number, active: boolean): void {
     const ch = this.characters.get(id);
     if (ch) {
@@ -845,8 +959,9 @@ export class OfficeState {
   getCharacterAt(worldX: number, worldY: number): number | null {
     const chars = this.getCharacters().sort((a, b) => b.y - a.y);
     for (const ch of chars) {
-      // Skip characters that are despawning
+      // Skip characters that are despawning or remote
       if (ch.matrixEffect === 'despawn') continue;
+      if (ch.isRemote) continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;

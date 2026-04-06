@@ -201,4 +201,6 @@ export interface Character {
   matrixEffectSeeds: number[];
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /** Whether this character represents a remote agent from another VS Code window */
+  isRemote: boolean;
 }

@@ -18,6 +18,21 @@ export interface SubagentCharacter {
   label: string;
 }
 
+export interface ToolHistoryEntry {
+  toolId: string;
+  toolName: string;
+  status: string;
+  startedAt: number;
+  endedAt?: number;
+}
+
+export interface AgentProfile {
+  createdAt: number;
+  toolHistory: ToolHistoryEntry[];
+  totalToolsRun: number;
+  turnsCompleted: number;
+}
+
 export interface FurnitureAsset {
   id: string;
   name: string;
@@ -51,6 +66,7 @@ export interface ExtensionMessageState {
   selectedAgent: number | null;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
+  agentProfiles: Record<number, AgentProfile>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
   subagentCharacters: SubagentCharacter[];
   layoutReady: boolean;
@@ -66,7 +82,7 @@ export interface ExtensionMessageState {
 function saveAgentSeats(os: OfficeState): void {
   const seats: Record<number, { palette: number; hueShift: number; seatId: string | null }> = {};
   for (const ch of os.characters.values()) {
-    if (ch.isSubagent) continue;
+    if (ch.isSubagent || ch.isRemote) continue;
     seats[ch.id] = { palette: ch.palette, hueShift: ch.hueShift, seatId: ch.seatId };
   }
   vscode.postMessage({ type: 'saveAgentSeats', seats });
@@ -81,6 +97,7 @@ export function useExtensionMessages(
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({});
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({});
+  const [agentProfiles, setAgentProfiles] = useState<Record<number, AgentProfile>>({});
   const [subagentTools, setSubagentTools] = useState<
     Record<number, Record<string, ToolActivity[]>>
   >({});
@@ -150,6 +167,10 @@ export function useExtensionMessages(
         const folderName = msg.folderName as string | undefined;
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         setSelectedAgent(id);
+        setAgentProfiles((prev) => ({
+          ...prev,
+          [id]: { createdAt: Date.now(), toolHistory: [], totalToolsRun: 0, turnsCompleted: 0 },
+        }));
         os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
@@ -163,6 +184,12 @@ export function useExtensionMessages(
           return next;
         });
         setAgentStatuses((prev) => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setAgentProfiles((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
           delete next[id];
@@ -196,6 +223,21 @@ export function useExtensionMessages(
             folderName: folderNames[id],
           });
         }
+        // Initialize profiles for existing agents (createdAt = now since we don't know when they started)
+        setAgentProfiles((prev) => {
+          const next = { ...prev };
+          for (const id of incoming) {
+            if (!next[id]) {
+              next[id] = {
+                createdAt: Date.now(),
+                toolHistory: [],
+                totalToolsRun: 0,
+                turnsCompleted: 0,
+              };
+            }
+          }
+          return next;
+        });
         setAgents((prev) => {
           const ids = new Set(prev);
           const merged = [...prev];
@@ -216,6 +258,22 @@ export function useExtensionMessages(
           return { ...prev, [id]: [...list, { toolId, status, done: false }] };
         });
         const toolName = extractToolName(status);
+        // Track in profile history
+        setAgentProfiles((prev) => {
+          const profile = prev[id];
+          if (!profile) return prev;
+          return {
+            ...prev,
+            [id]: {
+              ...profile,
+              totalToolsRun: profile.totalToolsRun + 1,
+              toolHistory: [
+                ...profile.toolHistory.slice(-49), // Keep last 50
+                { toolId, toolName: toolName ?? 'Unknown', status, startedAt: Date.now() },
+              ],
+            },
+          };
+        });
         os.setAgentTool(id, toolName);
         os.setAgentActive(id, true);
         os.clearPermissionBubble(id);
@@ -239,6 +297,16 @@ export function useExtensionMessages(
             [id]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)),
           };
         });
+        // Mark endedAt in profile tool history
+        setAgentProfiles((prev) => {
+          const profile = prev[id];
+          if (!profile) return prev;
+          const idx = profile.toolHistory.findIndex((h) => h.toolId === toolId && !h.endedAt);
+          if (idx === -1) return prev;
+          const updated = [...profile.toolHistory];
+          updated[idx] = { ...updated[idx], endedAt: Date.now() };
+          return { ...prev, [id]: { ...profile, toolHistory: updated } };
+        });
       } else if (msg.type === 'agentToolsClear') {
         const id = msg.id as number;
         setAgentTools((prev) => {
@@ -246,6 +314,15 @@ export function useExtensionMessages(
           const next = { ...prev };
           delete next[id];
           return next;
+        });
+        // Increment turns completed
+        setAgentProfiles((prev) => {
+          const profile = prev[id];
+          if (!profile) return prev;
+          return {
+            ...prev,
+            [id]: { ...profile, turnsCompleted: profile.turnsCompleted + 1 },
+          };
         });
         setSubagentTools((prev) => {
           if (!(id in prev)) return prev;
@@ -374,6 +451,20 @@ export function useExtensionMessages(
         setSubagentCharacters((prev) =>
           prev.filter((s) => !(s.parentAgentId === id && s.parentToolId === parentToolId)),
         );
+      } else if (msg.type === 'remoteAgentsUpdated') {
+        const remoteAgents = msg.remoteAgents as Array<{
+          windowId: string;
+          agents: Array<{
+            id: number;
+            palette: number;
+            hueShift: number;
+            seatId: string | null;
+            isActive: boolean;
+            currentTool: string | null;
+            folderName?: string;
+          }>;
+        }>;
+        os.syncRemoteAgents(remoteAgents);
       } else if (msg.type === 'characterSpritesLoaded') {
         const characters = msg.characters as Array<{
           down: string[][][];
@@ -435,6 +526,7 @@ export function useExtensionMessages(
     selectedAgent,
     agentTools,
     agentStatuses,
+    agentProfiles,
     subagentTools,
     subagentCharacters,
     layoutReady,

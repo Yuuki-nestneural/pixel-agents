@@ -30,6 +30,8 @@ import {
   SELECTION_HIGHLIGHT_COLOR,
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
+  WEATHER_NIGHT_OVERLAY,
+  WEATHER_RAIN_OVERLAY,
 } from '../../constants.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
@@ -202,7 +204,14 @@ export function renderScene(
     drawables.push({
       zY: charZY,
       draw: (c) => {
-        c.drawImage(cached, drawX, drawY);
+        if (ch.isRemote) {
+          c.save();
+          c.globalAlpha = 0.45;
+          c.drawImage(cached, drawX, drawY);
+          c.restore();
+        } else {
+          c.drawImage(cached, drawX, drawY);
+        }
       },
     });
   }
@@ -614,6 +623,7 @@ export function renderFrame(
   tileColors?: Array<FloorColor | null>,
   layoutCols?: number,
   layoutRows?: number,
+  weatherState?: string,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -656,6 +666,20 @@ export function renderFrame(
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom);
+
+  // Ambient weather overlay (night darkens, rain greys)
+  if (weatherState) {
+    const overlay =
+      weatherState === 'night'
+        ? WEATHER_NIGHT_OVERLAY
+        : weatherState === 'rain'
+          ? WEATHER_RAIN_OVERLAY
+          : '';
+    if (overlay) {
+      ctx.fillStyle = overlay;
+      ctx.fillRect(offsetX, offsetY, cols * TILE_SIZE * zoom, rows * TILE_SIZE * zoom);
+    }
+  }
 
   // Editor overlays
   if (editor) {

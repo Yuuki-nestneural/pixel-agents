@@ -97,6 +97,7 @@ export function createCharacter(
     matrixEffect: null,
     matrixEffectTimer: 0,
     matrixEffectSeeds: [],
+    isRemote: false,
   };
 }
 

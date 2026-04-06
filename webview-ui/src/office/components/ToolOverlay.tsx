@@ -15,6 +15,7 @@ interface ToolOverlayProps {
   zoom: number;
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
+  onShowProfile: (id: number) => void;
   alwaysShowOverlay: boolean;
 }
 
@@ -51,6 +52,7 @@ export function ToolOverlay({
   zoom,
   panRef,
   onCloseAgent,
+  onShowProfile,
   alwaysShowOverlay,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
@@ -199,6 +201,34 @@ export function ToolOverlay({
                   </span>
                 )}
               </div>
+              {isSelected && !isSub && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowProfile(id);
+                  }}
+                  title="Agent profile"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--pixel-text-dim)',
+                    cursor: 'pointer',
+                    padding: '0 2px',
+                    fontSize: '22px',
+                    lineHeight: 1,
+                    marginLeft: 2,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-accent)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-text-dim)';
+                  }}
+                >
+                  ℹ
+                </button>
+              )}
               {isSelected && !isSub && (
                 <button
                   onClick={(e) => {
