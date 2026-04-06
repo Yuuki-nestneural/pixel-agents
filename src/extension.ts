@@ -55,8 +55,8 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Wire webview submit response for ask_user → MCP server
-  provider.onAskUserResponse = (response: string) => {
-    if (mcpServerInstance?.submitAskUserResponse(response)) {
+  provider.onAskUserResponse = (response: string, image?: { base64: string; mimeType: string }) => {
+    if (mcpServerInstance?.submitAskUserResponse(response, image)) {
       outputChannel?.appendLine('[AskUser] Response submitted via webview → MCP');
     }
   };

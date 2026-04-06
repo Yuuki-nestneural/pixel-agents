@@ -3,8 +3,12 @@ import type { Direction, FloorColor, SpriteData } from '../types.js';
 import { Direction as Dir } from '../types.js';
 import bubbleBookData from './bubble-book.json';
 import bubbleCoffeeData from './bubble-coffee.json';
+import bubbleFridgeData from './bubble-fridge.json';
 import bubblePermissionData from './bubble-permission.json';
+import bubblePlantData from './bubble-plant.json';
+import bubbleThoughtData from './bubble-thought.json';
 import bubbleWaitingData from './bubble-waiting.json';
+import bubbleWaterData from './bubble-water.json';
 
 // ── Speech Bubble Sprites ───────────────────────────────────────
 
@@ -28,6 +32,18 @@ export const BUBBLE_COFFEE_SPRITE: SpriteData = resolveBubbleSprite(bubbleCoffee
 
 /** Book bubble: white square with open book icon, and a tail pointer (11x13) */
 export const BUBBLE_BOOK_SPRITE: SpriteData = resolveBubbleSprite(bubbleBookData);
+
+/** Water bubble: white square with water droplet icon, and a tail pointer (11x13) */
+export const BUBBLE_WATER_SPRITE: SpriteData = resolveBubbleSprite(bubbleWaterData);
+
+/** Thought bubble: cloud shape with question mark icon (11x13) */
+export const BUBBLE_THOUGHT_SPRITE: SpriteData = resolveBubbleSprite(bubbleThoughtData);
+
+/** Plant bubble: white square with sprout icon, and a tail pointer (11x13) */
+export const BUBBLE_PLANT_SPRITE: SpriteData = resolveBubbleSprite(bubblePlantData);
+
+/** Fridge/food bubble: white square with sandwich icon, and a tail pointer (11x13) */
+export const BUBBLE_FRIDGE_SPRITE: SpriteData = resolveBubbleSprite(bubbleFridgeData);
 
 // ════════════════════════════════════════════════════════════════
 // Loaded character sprites (from PNG assets)

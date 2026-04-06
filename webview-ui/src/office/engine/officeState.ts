@@ -641,11 +641,21 @@ export class OfficeState {
   }
 
   /** Furniture type → bubble type mapping for interactable items */
-  private static readonly FURNITURE_BUBBLE_MAP: Record<string, 'coffee' | 'book'> = {
+  private static readonly FURNITURE_BUBBLE_MAP: Record<
+    string,
+    'coffee' | 'book' | 'water' | 'plant' | 'fridge'
+  > = {
     COFFEE: 'coffee',
     COFFEE_TABLE: 'coffee',
     BOOKSHELF: 'book',
     DOUBLE_BOOKSHELF: 'book',
+    WATER_COOLER: 'water',
+    FRIDGE: 'fridge',
+    PLANT: 'plant',
+    PLANT_2: 'plant',
+    LARGE_PLANT: 'plant',
+    SMALL_PLANT: 'plant',
+    CACTUS: 'plant',
   };
 
   /** Build list of walkable tiles adjacent to interactable furniture */
@@ -804,8 +814,16 @@ export class OfficeState {
         );
       });
 
-      // Tick bubble timer for timed bubbles (waiting, coffee, book)
-      if (ch.bubbleType === 'waiting' || ch.bubbleType === 'coffee' || ch.bubbleType === 'book') {
+      // Tick bubble timer for timed bubbles
+      if (
+        ch.bubbleType === 'waiting' ||
+        ch.bubbleType === 'coffee' ||
+        ch.bubbleType === 'book' ||
+        ch.bubbleType === 'water' ||
+        ch.bubbleType === 'thought' ||
+        ch.bubbleType === 'plant' ||
+        ch.bubbleType === 'fridge'
+      ) {
         ch.bubbleTimer -= dt;
         if (ch.bubbleTimer <= 0) {
           ch.bubbleType = null;

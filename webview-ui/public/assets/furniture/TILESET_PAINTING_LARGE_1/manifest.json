@@ -1,0 +1,13 @@
+{
+  "id": "TILESET_PAINTING_LARGE_1",
+  "name": "Large Painting (Classic)",
+  "category": "wall",
+  "type": "asset",
+  "width": 32,
+  "height": 16,
+  "footprintW": 2,
+  "footprintH": 1,
+  "canPlaceOnWalls": true,
+  "canPlaceOnSurfaces": false,
+  "backgroundTiles": 0
+}

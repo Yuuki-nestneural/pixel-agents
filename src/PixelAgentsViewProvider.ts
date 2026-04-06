@@ -70,7 +70,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private copilotAgents = new Map<number, { label: string; status: string }>();
 
   // Callback for ask_user responses from the webview chat
-  onAskUserResponse?: (response: string) => void;
+  onAskUserResponse?: (response: string, image?: { base64: string; mimeType: string }) => void;
 
   // Callback when autopilot settings change
   onAutoPilotChanged?: (enabled: boolean, messages: string[], index: number) => void;
@@ -193,7 +193,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       } else if (message.type === 'askUserResponse') {
         // User submitted a response to an ask_user question from the webview chat
         if (message.response && typeof message.response === 'string') {
-          this.onAskUserResponse?.(message.response);
+          const image =
+            message.image &&
+            typeof message.image === 'object' &&
+            typeof message.image.base64 === 'string' &&
+            typeof message.image.mimeType === 'string'
+              ? {
+                  base64: message.image.base64 as string,
+                  mimeType: message.image.mimeType as string,
+                }
+              : undefined;
+          this.onAskUserResponse?.(message.response, image);
         }
       } else if (message.type === 'webviewReady') {
         restoreAgents(

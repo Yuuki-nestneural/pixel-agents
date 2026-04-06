@@ -36,8 +36,12 @@ import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
   BUBBLE_BOOK_SPRITE,
   BUBBLE_COFFEE_SPRITE,
+  BUBBLE_FRIDGE_SPRITE,
   BUBBLE_PERMISSION_SPRITE,
+  BUBBLE_PLANT_SPRITE,
+  BUBBLE_THOUGHT_SPRITE,
   BUBBLE_WAITING_SPRITE,
+  BUBBLE_WATER_SPRITE,
   getCharacterSprites,
 } from '../sprites/spriteData.js';
 import type {
@@ -502,6 +506,18 @@ export function renderBubbles(
       case 'book':
         sprite = BUBBLE_BOOK_SPRITE;
         break;
+      case 'water':
+        sprite = BUBBLE_WATER_SPRITE;
+        break;
+      case 'thought':
+        sprite = BUBBLE_THOUGHT_SPRITE;
+        break;
+      case 'plant':
+        sprite = BUBBLE_PLANT_SPRITE;
+        break;
+      case 'fridge':
+        sprite = BUBBLE_FRIDGE_SPRITE;
+        break;
       default:
         sprite = BUBBLE_WAITING_SPRITE;
         break;
@@ -510,7 +526,13 @@ export function renderBubbles(
     // Compute opacity: permission = full, timed bubbles fade in last 0.5s
     let alpha = 1.0;
     const isTimed =
-      ch.bubbleType === 'waiting' || ch.bubbleType === 'coffee' || ch.bubbleType === 'book';
+      ch.bubbleType === 'waiting' ||
+      ch.bubbleType === 'coffee' ||
+      ch.bubbleType === 'book' ||
+      ch.bubbleType === 'water' ||
+      ch.bubbleType === 'thought' ||
+      ch.bubbleType === 'plant' ||
+      ch.bubbleType === 'fridge';
     if (isTimed && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
       alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC;
     }

@@ -173,11 +173,20 @@ export interface Character {
   /** Assigned seat uid, or null if no seat */
   seatId: string | null;
   /** Active speech bubble type, or null if none showing */
-  bubbleType: 'permission' | 'waiting' | 'coffee' | 'book' | null;
+  bubbleType:
+    | 'permission'
+    | 'waiting'
+    | 'coffee'
+    | 'book'
+    | 'water'
+    | 'thought'
+    | 'plant'
+    | 'fridge'
+    | null;
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */
   bubbleTimer: number;
   /** Bubble type to show when arriving at furniture wander target */
-  wanderBubble: 'coffee' | 'book' | null;
+  wanderBubble: 'coffee' | 'book' | 'water' | 'plant' | 'fridge' | null;
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
   seatTimer: number;
   /** Whether this character represents a sub-agent (spawned by Task tool) */

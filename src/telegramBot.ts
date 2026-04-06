@@ -122,6 +122,88 @@ export class TelegramBot {
   }
 
   /**
+   * Send a photo to the configured Telegram chat via base64 data upload.
+   * Uses multipart/form-data to upload the image directly.
+   */
+  async sendPhotoBase64(base64Data: string, mimeType: string, caption?: string): Promise<number> {
+    const url = `${this.apiBase}/sendPhoto`;
+    const ext = mimeType.split('/')[1] || 'png';
+    const binaryData = Buffer.from(base64Data, 'base64');
+    const boundary = `----PixelAgents${Date.now()}`;
+
+    let body = '';
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="chat_id"\r\n\r\n`;
+    body += `${this.chatId}\r\n`;
+
+    if (caption) {
+      body += `--${boundary}\r\n`;
+      body += `Content-Disposition: form-data; name="caption"\r\n\r\n`;
+      body += `${caption}\r\n`;
+      body += `--${boundary}\r\n`;
+      body += `Content-Disposition: form-data; name="parse_mode"\r\n\r\n`;
+      body += `Markdown\r\n`;
+    }
+
+    // Build multipart body with binary photo
+    const prefix = Buffer.from(
+      `${body}--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="image.${ext}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+    );
+    const suffix = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const multipartBody = Buffer.concat([prefix, binaryData, suffix]);
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: multipartBody,
+    });
+    if (!resp.ok) {
+      const respBody = await resp.text();
+      throw new Error(`Telegram sendPhoto (base64) failed (${resp.status}): ${respBody}`);
+    }
+    const result = (await resp.json()) as { result: TelegramMessage };
+    return result.result.message_id;
+  }
+
+  /**
+   * Send a document/file to the configured Telegram chat via binary upload.
+   * Uses multipart/form-data to upload the file directly.
+   */
+  async sendDocument(fileData: Buffer, filename: string, caption?: string): Promise<number> {
+    const url = `${this.apiBase}/sendDocument`;
+    const boundary = `----PixelAgents${Date.now()}`;
+
+    let preamble = '';
+    preamble += `--${boundary}\r\n`;
+    preamble += `Content-Disposition: form-data; name="chat_id"\r\n\r\n`;
+    preamble += `${this.chatId}\r\n`;
+
+    if (caption) {
+      preamble += `--${boundary}\r\n`;
+      preamble += `Content-Disposition: form-data; name="caption"\r\n\r\n`;
+      preamble += `${caption}\r\n`;
+    }
+
+    const prefix = Buffer.from(
+      `${preamble}--${boundary}\r\nContent-Disposition: form-data; name="document"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+    );
+    const suffix = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const multipartBody = Buffer.concat([prefix, fileData, suffix]);
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: multipartBody,
+    });
+    if (!resp.ok) {
+      const respBody = await resp.text();
+      throw new Error(`Telegram sendDocument failed (${resp.status}): ${respBody}`);
+    }
+    const data = (await resp.json()) as { result: TelegramMessage };
+    return data.result.message_id;
+  }
+
+  /**
    * Get file info from Telegram servers.
    * Returns the file_path needed to download the file.
    */
@@ -274,8 +356,15 @@ export class TelegramBot {
    * @param text The notification message
    * @param imageUrl Optional image URL to send alongside the notification
    */
-  async notifyUser(text: string, imageUrl?: string): Promise<void> {
-    if (imageUrl) {
+  async notifyUser(
+    text: string,
+    imageUrl?: string,
+    imageBase64?: string,
+    imageMimeType?: string,
+  ): Promise<void> {
+    if (imageBase64 && imageMimeType) {
+      await this.sendPhotoBase64(imageBase64, imageMimeType, `📋 *Agent Notification:*\n${text}`);
+    } else if (imageUrl) {
       await this.sendPhoto(imageUrl, `📋 *Agent Notification:*\n${text}`);
     } else {
       await this.sendMessage(`📋 *Agent Notification:*\n${text}`);
@@ -287,12 +376,20 @@ export class TelegramBot {
    * Use `getReply(requestId)` to poll for the response.
    * This avoids MCP tool timeouts by returning immediately.
    */
-  async sendQuestion(text: string, timeoutMs = 0, imageUrl?: string): Promise<string> {
+  async sendQuestion(
+    text: string,
+    timeoutMs = 0,
+    imageUrl?: string,
+    imageBase64?: string,
+    imageMimeType?: string,
+  ): Promise<string> {
     // Flush old updates
     await this.flushOldUpdates();
 
     // Send the question
-    if (imageUrl) {
+    if (imageBase64 && imageMimeType) {
+      await this.sendPhotoBase64(imageBase64, imageMimeType, `🤖 *Agent Question:*\n${text}`);
+    } else if (imageUrl) {
       await this.sendPhoto(imageUrl, `🤖 *Agent Question:*\n${text}`);
     } else {
       await this.sendMessage(`🤖 *Agent Question:*\n${text}`);
@@ -372,6 +469,14 @@ export class TelegramBot {
    */
   private ensurePolling(): void {
     if (this.pollingActive) return;
+
+    // Stop background polling to prevent concurrent getUpdates calls
+    // (two loops polling simultaneously can steal each other's messages)
+    if (this.bgPollingActive && this.bgPollingAbort) {
+      this.bgPollingAbort.abort();
+      this.bgPollingActive = false;
+    }
+
     this.pollingActive = true;
     this.pollingAbort = new AbortController();
     this.pollLoop(this.pollingAbort.signal).catch(() => {});
@@ -449,6 +554,11 @@ export class TelegramBot {
       }
     }
     this.pollingActive = false;
+
+    // Restart background polling now that the per-request poll is done
+    if (!this.bgPollingActive) {
+      this.startBackgroundPolling();
+    }
   }
 
   /**
@@ -492,9 +602,10 @@ export class TelegramBot {
   private async bgPollLoop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        // Skip if the regular poll loop is active (it handles messages)
+        // Yield to the regular poll loop if it's active
+        // (ensurePolling will abort this loop, but check just in case)
         if (this.pollingActive) {
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 500));
           continue;
         }
 

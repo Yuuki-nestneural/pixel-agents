@@ -1,0 +1,13 @@
+{
+  "id": "WALL_CLOCK",
+  "name": "Wall Clock",
+  "category": "wall",
+  "type": "asset",
+  "width": 16,
+  "height": 16,
+  "footprintW": 1,
+  "footprintH": 1,
+  "canPlaceOnWalls": true,
+  "canPlaceOnSurfaces": false,
+  "backgroundTiles": 0
+}

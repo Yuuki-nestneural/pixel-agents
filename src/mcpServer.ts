@@ -66,13 +66,16 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
 
   // Pending ask_user request (for resolving from webview or Telegram)
   private pendingAskUser: {
-    resolve: (response: string) => void;
+    resolve: (response: { text: string; image?: { data: string; mimeType: string } }) => void;
     requestId: string;
     resolved: boolean;
   } | null = null;
 
   // Resolved replies waiting to be picked up by get_user_reply
-  private resolvedReplies = new Map<string, string>();
+  private resolvedReplies = new Map<
+    string,
+    { text: string; image?: { data: string; mimeType: string } }
+  >();
 
   // Queue for user messages that arrive when no ask_user is pending
   private userMessageQueue: string[] = [];
@@ -154,14 +157,18 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
    * Submit a response to the currently pending ask_user question.
    * If no question is pending, queues the message for the next ask_user call.
    */
-  submitAskUserResponse(response: string): boolean {
+  submitAskUserResponse(response: string, image?: { base64: string; mimeType: string }): boolean {
     if (this.pendingAskUser && !this.pendingAskUser.resolved) {
       const { requestId } = this.pendingAskUser;
       this.pendingAskUser.resolved = true;
-      this.pendingAskUser.resolve(response);
+      const replyData = {
+        text: response,
+        image: image ? { data: image.base64, mimeType: image.mimeType } : undefined,
+      };
+      this.pendingAskUser.resolve(replyData);
 
       // Also store in resolved replies in case the Promise was already abandoned
-      this.resolvedReplies.set(requestId, response);
+      this.resolvedReplies.set(requestId, replyData);
 
       this.pendingAskUser = null;
 
@@ -237,18 +244,22 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         // Wire unsolicited message handler for Telegram queue support
         this.telegramBot.onUnsolicitedMessage = (reply) => {
           const text = reply.text || (reply.image ? '[Photo]' : '');
-          if (!text) return;
+          if (!text && !reply.image) return;
 
           // If there's a pending ask_user, resolve it directly
           if (this.pendingAskUser && !this.pendingAskUser.resolved) {
             const { requestId } = this.pendingAskUser;
             this.pendingAskUser.resolved = true;
-            this.resolvedReplies.set(requestId, text);
-            this.pendingAskUser.resolve(text);
+            const replyData = {
+              text: text || '',
+              image: reply.image,
+            };
+            this.resolvedReplies.set(requestId, replyData);
+            this.pendingAskUser.resolve(replyData);
             this.pendingAskUser = null;
           } else {
             // No pending ask_user — queue for the next one
-            this.userMessageQueue.push(text);
+            this.userMessageQueue.push(text || '[Photo]');
             this.outputChannel.appendLine(
               `[MCP] Telegram message queued (${this.userMessageQueue.length} in queue)`,
             );
@@ -354,7 +365,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     // ── ask_user: Ask the user a question (non-blocking with short wait) ──
     srv.tool(
       'ask_user',
-      'Send a question to the user via Telegram and/or the VS Code webview panel. Waits briefly (~15s) for an immediate reply. If the user replies within that window, returns the response directly. Otherwise returns a request_id — use get_user_reply to poll for the response. The response format is: {"response":"...","queued":false,"attachmentCount":0} for direct replies, or {"request_id":"..."} if still waiting. If queued is true, the response was sent by the user before you asked — still process it normally.',
+      'Send a question to the user via Telegram and/or the VS Code webview panel. Waits briefly (~15s) for an immediate reply. If the user replies within that window, returns the response directly. Otherwise returns a request_id — use get_user_reply to poll for the response. The response format is: {"response":"...","queued":false,"attachmentCount":0} for direct replies, or {"request_id":"..."} if still waiting. If queued is true, the response was sent by the user before you asked — still process it normally. Supports sending an image alongside the question, and receiving image replies.',
       {
         question: z.string().describe('The question to ask the user'),
         timeout_seconds: z
@@ -363,13 +374,43 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           .describe(
             'Max seconds to wait for an immediate reply (default: 15, 0 = return immediately with request_id)',
           ),
+        image_url: z
+          .string()
+          .optional()
+          .describe(
+            'Optional HTTP URL of an image to send alongside the question. Telegram will fetch the image from this URL.',
+          ),
+        image_base64: z
+          .string()
+          .optional()
+          .describe(
+            'Optional base64-encoded image data to send alongside the question. Use with image_mime_type.',
+          ),
+        image_mime_type: z
+          .string()
+          .optional()
+          .describe(
+            'MIME type of the base64-encoded image (e.g., "image/png", "image/jpeg"). Required when image_base64 is provided.',
+          ),
       },
-      async ({ question, timeout_seconds }: { question: string; timeout_seconds?: number }) => {
+      async ({
+        question,
+        timeout_seconds,
+        image_url,
+        image_base64,
+        image_mime_type,
+      }: {
+        question: string;
+        timeout_seconds?: number;
+        image_url?: string;
+        image_base64?: string;
+        image_mime_type?: string;
+      }) => {
         // Log the outgoing question
         this.chatLog?.addEntry({
           agentName: 'Agent',
           type: 'ask_user',
-          message: question,
+          message: image_url ? `${question}\n[Image: ${image_url}]` : question,
         });
 
         // Forward to webview (for whiteboard chat panel)
@@ -431,7 +472,13 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         let telegramRequestId: string | undefined;
         if (bot) {
           try {
-            telegramRequestId = await bot.sendQuestion(question, 0);
+            telegramRequestId = await bot.sendQuestion(
+              question,
+              0,
+              image_url,
+              image_base64,
+              image_mime_type,
+            );
           } catch {
             this.outputChannel.appendLine('[MCP] Failed to send question via Telegram');
           }
@@ -441,9 +488,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         const waitMs = Math.min(Math.max((timeout_seconds ?? 15) * 1000, 0), 25000);
 
         // Set up the pending request
-        const responsePromise = new Promise<string | null>((resolve) => {
+        const responsePromise = new Promise<{
+          text: string;
+          image?: { data: string; mimeType: string };
+        } | null>((resolve) => {
           const pending = {
-            resolve: (resp: string) => {
+            resolve: (resp: { text: string; image?: { data: string; mimeType: string } }) => {
               // Store in resolved replies map for get_user_reply polling
               this.resolvedReplies.set(requestId, resp);
               resolve(resp);
@@ -459,11 +509,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
               .getReply(telegramRequestId, 1_800_000)
               .then((reply) => {
                 if (pending.resolved) return;
-                if (reply?.text && this.pendingAskUser === pending) {
+                if ((reply?.text || reply?.image) && this.pendingAskUser === pending) {
                   pending.resolved = true;
                   this.pendingAskUser = null;
-                  this.resolvedReplies.set(requestId, reply.text);
-                  resolve(reply.text);
+                  const replyData = { text: reply.text || '', image: reply.image };
+                  this.resolvedReplies.set(requestId, replyData);
+                  resolve(replyData);
                 }
               })
               .catch(() => {});
@@ -480,21 +531,31 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
             this.chatLog?.addEntry({
               agentName: 'User',
               type: 'user_reply',
-              message: result,
+              message: result.text,
+              imageBase64: result.image?.data,
+              imageMimeType: result.image?.mimeType,
             });
 
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({
-                    response: result,
-                    queued: false,
-                    attachmentCount: 0,
-                  }),
-                },
-              ],
-            };
+            const content: Array<
+              { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+            > = [];
+            content.push({
+              type: 'text' as const,
+              text: JSON.stringify({
+                response: result.text,
+                queued: false,
+                attachmentCount: result.image ? 1 : 0,
+              }),
+            });
+            if (result.image) {
+              content.push({
+                type: 'image' as const,
+                data: result.image.data,
+                mimeType: result.image.mimeType,
+              });
+            }
+
+            return { content };
           }
         }
 
@@ -528,6 +589,32 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           .describe('Seconds to wait for a reply before returning (default: 10, max: 25)'),
       },
       async ({ request_id, wait_seconds }: { request_id: string; wait_seconds?: number }) => {
+        // Helper to build MCP content array from a resolved reply
+        const buildReplyContent = (
+          reply: { text: string; image?: { data: string; mimeType: string } },
+          queued: boolean,
+        ) => {
+          const content: Array<
+            { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+          > = [];
+          content.push({
+            type: 'text' as const,
+            text: JSON.stringify({
+              response: reply.text,
+              queued,
+              attachmentCount: reply.image ? 1 : 0,
+            }),
+          });
+          if (reply.image) {
+            content.push({
+              type: 'image' as const,
+              data: reply.image.data,
+              mimeType: reply.image.mimeType,
+            });
+          }
+          return { content };
+        };
+
         // First check if reply was already resolved (via webview or Telegram background)
         const existingReply = this.resolvedReplies.get(request_id);
         if (existingReply) {
@@ -536,21 +623,12 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           this.chatLog?.addEntry({
             agentName: 'User',
             type: 'user_reply',
-            message: existingReply,
+            message: existingReply.text,
+            imageBase64: existingReply.image?.data,
+            imageMimeType: existingReply.image?.mimeType,
           });
 
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  response: existingReply,
-                  queued: false,
-                  attachmentCount: 0,
-                }),
-              },
-            ],
-          };
+          return buildReplyContent(existingReply, false);
         }
 
         // Check the webview message queue (user may have typed during wait)
@@ -600,20 +678,11 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
               this.chatLog?.addEntry({
                 agentName: 'User',
                 type: 'user_reply',
-                message: reply,
+                message: reply.text,
+                imageBase64: reply.image?.data,
+                imageMimeType: reply.image?.mimeType,
               });
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: JSON.stringify({
-                      response: reply,
-                      queued: false,
-                      attachmentCount: 0,
-                    }),
-                  },
-                ],
-              };
+              return buildReplyContent(reply, false);
             }
 
             // Check message queue
@@ -658,21 +727,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
               imageMimeType: reply.image?.mimeType,
             });
 
-            const content: Array<
-              { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-            > = [];
-            if (reply.text) content.push({ type: 'text' as const, text: reply.text });
-            if (reply.image) {
-              content.push({
-                type: 'image' as const,
-                data: reply.image.data,
-                mimeType: reply.image.mimeType,
-              });
-            }
-            if (content.length === 0) {
-              content.push({ type: 'text' as const, text: '[Empty reply]' });
-            }
-            return { content };
+            return buildReplyContent({ text: reply.text || '[Photo]', image: reply.image }, false);
           }
         }
 
@@ -690,7 +745,7 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
     // ── notify_user: One-way notification to Telegram ────────────
     srv.tool(
       'notify_user',
-      'Send a one-way notification to the user via Telegram. Does not wait for a reply. Supports sending an image alongside the notification.',
+      'Send a one-way notification to the user via Telegram. Does not wait for a reply. Supports sending an image alongside the notification via URL or base64 data.',
       {
         message: z.string().describe('The notification message to send'),
         image_url: z
@@ -699,14 +754,36 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
           .describe(
             'Optional HTTP URL of an image to send alongside the notification. Telegram will fetch the image from this URL.',
           ),
+        image_base64: z
+          .string()
+          .optional()
+          .describe(
+            'Optional base64-encoded image data to send alongside the notification. Use with image_mime_type.',
+          ),
+        image_mime_type: z
+          .string()
+          .optional()
+          .describe(
+            'MIME type of the base64-encoded image (e.g., "image/png", "image/jpeg"). Required when image_base64 is provided.',
+          ),
       },
-      async ({ message, image_url }: { message: string; image_url?: string }) => {
+      async ({
+        message,
+        image_url,
+        image_base64,
+        image_mime_type,
+      }: {
+        message: string;
+        image_url?: string;
+        image_base64?: string;
+        image_mime_type?: string;
+      }) => {
         const bot = this.refreshTelegramBot();
 
         // Send via Telegram if configured
         if (bot) {
           try {
-            await bot.notifyUser(message, image_url);
+            await bot.notifyUser(message, image_url, image_base64, image_mime_type);
           } catch (e) {
             this.outputChannel.appendLine(
               `[MCP] Telegram notification failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -718,12 +795,67 @@ export class PixelAgentsMcpServer implements vscode.Disposable {
         this.chatLog?.addEntry({
           agentName: 'Agent',
           type: 'notify_user',
-          message: image_url ? `${message}\n[Image: ${image_url}]` : message,
+          message:
+            image_url || image_base64
+              ? `${message}\n[Image: ${image_url || 'base64 data'}]`
+              : message,
         });
 
         return {
           content: [{ type: 'text' as const, text: 'Notification sent successfully.' }],
         };
+      },
+    );
+
+    // ── send_file: Send a file to the user via Telegram ────────────
+    srv.tool(
+      'send_file',
+      'Send a local file to the user via Telegram. Reads the file from the filesystem and uploads it as a document.',
+      {
+        file_path: z.string().describe('Absolute path to the file to send'),
+        caption: z.string().optional().describe('Optional caption to include with the file'),
+      },
+      async ({ file_path, caption }: { file_path: string; caption?: string }) => {
+        const bot = this.refreshTelegramBot();
+        if (!bot) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Telegram is not configured. Set pixelAgents.telegram.botToken and pixelAgents.telegram.chatId.',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        try {
+          const fs = await import('fs');
+          const pathMod = await import('path');
+          const fileData = fs.readFileSync(file_path);
+          const filename = pathMod.basename(file_path);
+          await bot.sendDocument(fileData, filename, caption);
+
+          this.chatLog?.addEntry({
+            agentName: 'Agent',
+            type: 'notify_user',
+            message: `[File: ${filename}]${caption ? ` ${caption}` : ''}`,
+          });
+
+          return {
+            content: [{ type: 'text' as const, text: `File "${filename}" sent successfully.` }],
+          };
+        } catch (e) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Failed to send file: ${e instanceof Error ? e.message : String(e)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       },
     );
 

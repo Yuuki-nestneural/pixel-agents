@@ -1,0 +1,13 @@
+{
+  "id": "LIBRARY_SHELF",
+  "name": "Library Shelf",
+  "category": "wall",
+  "type": "asset",
+  "width": 32,
+  "height": 32,
+  "footprintW": 2,
+  "footprintH": 2,
+  "canPlaceOnWalls": true,
+  "canPlaceOnSurfaces": false,
+  "backgroundTiles": 0
+}

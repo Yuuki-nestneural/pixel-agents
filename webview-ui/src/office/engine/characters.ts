@@ -2,6 +2,7 @@ import {
   FURNITURE_BUBBLE_DURATION_SEC,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
+  THOUGHT_BUBBLE_DURATION_SEC,
   TYPE_FRAME_DURATION_SEC,
   WALK_FRAME_DURATION_SEC,
   WALK_SPEED_PX_PER_SEC,
@@ -11,6 +12,7 @@ import {
   WANDER_PAUSE_MAX_SEC,
   WANDER_PAUSE_MIN_SEC,
   WANDER_SOCIAL_CHANCE,
+  WANDER_THOUGHT_CHANCE,
 } from '../../constants.js';
 import { findPath } from '../layout/tileMap.js';
 import type { CharacterSprites } from '../sprites/spriteData.js';
@@ -25,7 +27,7 @@ export interface InteractableFurniture {
   col: number;
   row: number;
   /** Bubble type to show when character arrives */
-  bubbleType: 'coffee' | 'book';
+  bubbleType: 'coffee' | 'book' | 'water' | 'plant' | 'fridge';
 }
 
 export function isReadingTool(tool: string | null): boolean {
@@ -239,6 +241,11 @@ export function updateCharacter(
           // Fallback: random walkable tile
           if (!target) {
             target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+            // Random chance to show a thought bubble while wandering aimlessly
+            if (!ch.bubbleType && Math.random() < WANDER_THOUGHT_CHANCE) {
+              ch.bubbleType = 'thought';
+              ch.bubbleTimer = THOUGHT_BUBBLE_DURATION_SEC;
+            }
           }
 
           const path = findPath(
