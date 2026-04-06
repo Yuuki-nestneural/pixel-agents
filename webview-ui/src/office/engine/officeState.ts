@@ -35,6 +35,7 @@ import type {
 import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
 import { createCharacter, type InteractableFurniture, updateCharacter } from './characters.js';
 import { matrixEffectSeeds } from './matrixEffect.js';
+import { createRainState, type RainState, updateRain } from './rainEffect.js';
 
 export type WeatherState = 'clear' | 'rain' | 'night';
 const WEATHER_STATES: WeatherState[] = ['clear', 'rain', 'night'];
@@ -75,6 +76,8 @@ export class OfficeState {
   weatherState: WeatherState = 'clear';
   /** Countdown timer until next weather change */
   private weatherTimer: number;
+  /** Rain particle state */
+  rainState: RainState = createRainState();
 
   constructor(layout?: OfficeLayout) {
     this.layout = layout || createDefaultLayout();
@@ -873,6 +876,15 @@ export class OfficeState {
         WEATHER_CYCLE_MIN_SEC + Math.random() * (WEATHER_CYCLE_MAX_SEC - WEATHER_CYCLE_MIN_SEC);
       this.rebuildFurnitureInstances();
     }
+
+    // Rain particle update
+    updateRain(
+      this.rainState,
+      dt,
+      this.weatherState === 'rain',
+      this.layout.cols,
+      this.layout.rows,
+    );
 
     // Furniture animation cycling
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);

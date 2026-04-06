@@ -29,6 +29,15 @@ export const WEATHER_CYCLE_MAX_SEC = 600; // 10 min maximum between weather chan
 export const WEATHER_NIGHT_OVERLAY = 'rgba(10, 10, 50, 0.30)';
 export const WEATHER_RAIN_OVERLAY = 'rgba(40, 40, 70, 0.12)';
 export const WEATHER_CLEAR_OVERLAY = ''; // No overlay for clear weather
+export const RAIN_DROP_COUNT = 120; // Number of rain drops on screen
+export const RAIN_DROP_MIN_SPEED = 120; // Minimum fall speed in pixels/sec
+export const RAIN_DROP_MAX_SPEED = 250; // Maximum fall speed in pixels/sec
+export const RAIN_DROP_MIN_LENGTH = 3; // Minimum rain streak length in pixels
+export const RAIN_DROP_MAX_LENGTH = 7; // Maximum rain streak length in pixels
+export const RAIN_DROP_COLOR = 'rgba(140, 160, 200, 0.35)'; // Rain streak color
+export const RAIN_SPLASH_COLOR = 'rgba(140, 160, 200, 0.25)'; // Splash color
+export const RAIN_SPLASH_DURATION_SEC = 0.15; // Splash animation duration
+export const RAIN_WIND_ANGLE = 0.15; // Slight angle for wind (radians, ~8.5 degrees)
 
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;

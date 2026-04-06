@@ -58,6 +58,7 @@ import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
+import { type RainState, renderRain } from './rainEffect.js';
 
 // ── Render functions ────────────────────────────────────────────
 
@@ -624,6 +625,7 @@ export function renderFrame(
   layoutCols?: number,
   layoutRows?: number,
   weatherState?: string,
+  rainState?: RainState,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -679,6 +681,11 @@ export function renderFrame(
       ctx.fillStyle = overlay;
       ctx.fillRect(offsetX, offsetY, cols * TILE_SIZE * zoom, rows * TILE_SIZE * zoom);
     }
+  }
+
+  // Rain particles (on top of overlay, before editor)
+  if (rainState) {
+    renderRain(ctx, rainState, offsetX, offsetY, zoom);
   }
 
   // Editor overlays
